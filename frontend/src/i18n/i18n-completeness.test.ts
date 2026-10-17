@@ -1,6 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import fs from 'node:fs';
-import path from 'node:path';
 import en from './en';
 
 describe('i18n key completeness', () => {
@@ -14,32 +12,31 @@ describe('i18n key completeness', () => {
     }
   });
 
-  const i18nDir = path.resolve(__dirname);
-  const localeFiles = fs
-    .readdirSync(i18nDir)
-    .filter(
-      (file) =>
-        file.endsWith('.ts') &&
-        !file.endsWith('.test.ts') &&
-        !file.endsWith('.d.ts') &&
-        file !== 'en.ts' &&
-        file !== 'index.ts'
+  const localeModules = import.meta.glob<{ default?: Record<string, string> }>('./*.ts', {
+    eager: true,
+  });
+
+  const candidateLocales = Object.entries(localeModules).filter(([filePath]) => {
+    return (
+      !filePath.endsWith('.test.ts') &&
+      !filePath.endsWith('.d.ts') &&
+      !filePath.endsWith('/en.ts') &&
+      !filePath.endsWith('/index.ts')
     );
+  });
 
-  it('verifies that every other locale has all keys present in en.ts', async () => {
-    expect(localeFiles.length).toBeGreaterThanOrEqual(1);
+  it('verifies that every other locale has all keys present in en.ts', () => {
+    expect(candidateLocales.length).toBeGreaterThanOrEqual(1);
 
-    for (const file of localeFiles) {
-      const localePath = path.join(i18nDir, file);
-      const imported = await import(localePath);
-      const catalog = imported.default || imported;
+    for (const [filePath, moduleExports] of candidateLocales) {
+      const catalog = moduleExports.default || (moduleExports as unknown as Record<string, string>);
       const catalogKeys = new Set(Object.keys(catalog));
 
       const missingKeys = enKeys.filter((key) => !catalogKeys.has(key));
 
       if (missingKeys.length > 0) {
         throw new Error(
-          `Locale "${file}" is missing ${missingKeys.length} key(s):\n  - ${missingKeys.join('\n  - ')}`
+          `Locale "${filePath}" is missing ${missingKeys.length} key(s):\n  - ${missingKeys.join('\n  - ')}`
         );
       }
       expect(missingKeys).toEqual([]);
