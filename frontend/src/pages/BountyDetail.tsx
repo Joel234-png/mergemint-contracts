@@ -11,6 +11,7 @@ import { ExtendDeadline } from '../components/ExtendDeadline';
 import { CancelBountyDialog } from '../components/CancelBountyDialog';
 import { MilestoneTracker } from '../components/MilestoneTracker';
 import { SubmitWorkModal } from '../components/SubmitWorkModal';
+import { VerifierPanel } from '../components/VerifierPanel';
 import { useWallet } from '../lib/WalletContext';
 import { CONFIGURED_NETWORK } from '../lib/network';
 import { useTranslation } from '../i18n';
@@ -92,6 +93,10 @@ function BountyDetailInner() {
 
   const isOpen = bounty.status === 'open';
 
+  const verifiers = bounty.verifiers ?? [];
+  const approvalThreshold = bounty.approvalThreshold ?? 0;
+  const showVerifierPanel = verifiers.length > 0 && approvalThreshold > 0;
+
   return (
     <div className="bounty-detail-page">
       <h1>{bounty.title}</h1>
@@ -116,6 +121,14 @@ function BountyDetailInner() {
         >
           Submit Work
         </button>
+      )}
+      {showVerifierPanel && (
+        <VerifierPanel
+          bountyId={bounty.id}
+          verifiers={verifiers}
+          threshold={approvalThreshold}
+          onApproved={fetchBounty}
+        />
       )}
       {isCreator && isOpen && (
         <>
