@@ -10,6 +10,7 @@ import { TopUpModal } from '../components/TopUpModal';
 import { ExtendDeadline } from '../components/ExtendDeadline';
 import { CancelBountyDialog } from '../components/CancelBountyDialog';
 import { MilestoneTracker } from '../components/MilestoneTracker';
+import { SubmitWorkModal } from '../components/SubmitWorkModal';
 import { useWallet } from '../lib/WalletContext';
 import { CONFIGURED_NETWORK } from '../lib/network';
 import { useTranslation } from '../i18n';
@@ -31,6 +32,7 @@ function BountyDetailInner() {
   // Modal/dialog visibility flags.
   const [showTopUp, setShowTopUp] = useState(false);
   const [showCancel, setShowCancel] = useState(false);
+  const [showSubmitWork, setShowSubmitWork] = useState(false);
 
   function fetchBounty() {
     if (!id) return;
@@ -84,6 +86,10 @@ function BountyDetailInner() {
     address && bounty.creator && address.toLowerCase() === bounty.creator.toLowerCase()
   );
 
+  const isAssignee = Boolean(
+    address && bounty.assignee && address.toLowerCase() === bounty.assignee.toLowerCase()
+  );
+
   const isOpen = bounty.status === 'open';
 
   return (
@@ -102,6 +108,15 @@ function BountyDetailInner() {
       <button onClick={handleClaim} disabled={claiming || !isOpen}>
         {claiming ? t('claiming') : t('claim_bounty')}
       </button>
+      {isAssignee && (
+        <button
+          type="button"
+          onClick={() => setShowSubmitWork(true)}
+          className="submit-work-open-button"
+        >
+          Submit Work
+        </button>
+      )}
       {isCreator && isOpen && (
         <>
           <button
@@ -140,6 +155,12 @@ function BountyDetailInner() {
         rewardToken="XLM"
         onConfirm={handleCancel}
       />
+      <SubmitWorkModal
+        isOpen={showSubmitWork}
+        onClose={() => setShowSubmitWork(false)}
+        bountyId={bounty.id}
+        onSuccess={fetchBounty}
+      />
     </div>
   );
 }
@@ -156,4 +177,3 @@ export function BountyDetail() {
     </BountyErrorBoundary>
   );
 }
-
