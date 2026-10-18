@@ -97,6 +97,53 @@ export interface ExtendDeadlineParams {
 }
 
 /**
+ * Parameters for reopening a closed-expired bounty so contributors can claim
+ * and work on it again.  Only the original creator may reopen.
+ */
+export interface ReopenBountyParams {
+  /** Address of the bounty creator (must be authorised). */
+  creator: string;
+  /** Bounty id as a hex-encoded `BytesN<32>` string. */
+  bountyId: string;
+  /**
+   * New deadline as a Unix timestamp (seconds).  Must be strictly later than
+   * the current ledger time.
+   */
+  newDeadline: number;
+}
+
+/**
+ * Parameters for handing a claimed bounty from the current assignee to a
+ * different contributor.  Only the original creator may reassign, and the new
+ * assignee must pass the same eligibility checks as `claim_bounty`.
+ */
+export interface ReassignBountyParams {
+  /** Address of the bounty creator (must be authorised). */
+  creator: string;
+  /** Bounty id as a hex-encoded `BytesN<32>` string. */
+  bountyId: string;
+  /** Address of the contributor receiving the reassignment. */
+  newAssignee: string;
+}
+
+/**
+ * Parameters for an assignee submitting their completed work for review.
+ * submissions are reviewed by the creator / verifiers before
+ * `complete_bounty` distributes the reward.
+ */
+export interface SubmitWorkParams {
+  /** Address of the submitting assignee. */
+  assignee: string;
+  /** Bounty id as a hex-encoded `BytesN<32>` string. */
+  bountyId: string;
+  /**
+   * Human-readable submission note or reference.  Mapped to a contract
+   * `Symbol` on-chain, so it must respect the 32-character Symbol limit.
+   */
+  submission: string;
+}
+
+/**
  * Options controlling the fee-bump retry strategy used when submitting
  * transactions under network congestion.
  */

@@ -98,6 +98,34 @@ export class InvalidRpcUrlError extends ContractError {
   }
 }
 
+/** Thrown when `reopen_bounty` is rejected because the bounty is past refund or already reopened. */
+export class ReopenNotAllowedError extends ContractError {
+  constructor(rawMessage: string, details?: unknown) {
+    super(
+      "Reopen not allowed: the bounty cannot be reopened (e.g. already reopened or refunded).",
+      "INVALID_ARGUMENT",
+      rawMessage,
+      details
+    );
+    this.name = "ReopenNotAllowedError";
+    Object.setPrototypeOf(this, ReopenNotAllowedError.prototype);
+  }
+}
+
+/** Thrown when `submit_work` is rejected because the assignee has no work record on the bounty. */
+export class SubmissionNotFoundError extends ContractError {
+  constructor(rawMessage: string, details?: unknown) {
+    super(
+      "Submission not found: the assignee has no work submission registered for this bounty.",
+      "NOT_FOUND",
+      rawMessage,
+      details
+    );
+    this.name = "SubmissionNotFoundError";
+    Object.setPrototypeOf(this, SubmissionNotFoundError.prototype);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Simulation error parser
 // ---------------------------------------------------------------------------
@@ -147,9 +175,18 @@ export function parseSimulationError(raw: string): ContractError {
     lower.includes("not found") ||
     lower.includes("notfound") ||
     lower.includes("does not exist") ||
-    lower.includes("no such")
+    lower.includes("no such") ||
+    lower.includes("submission not found")
   ) {
     return new NotFoundError(raw);
+  }
+
+  if (
+    lower.includes("refund_reopen") ||
+    lower.includes("reopen not allowed") ||
+    lower.includes("already reopened")
+  ) {
+    return new ReopenNotAllowedError(raw);
   }
 
   if (lower.includes("invalid argument") || lower.includes("invalid param")) {

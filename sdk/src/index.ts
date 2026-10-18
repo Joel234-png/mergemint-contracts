@@ -23,6 +23,9 @@ import {
   TopUpParams,
   UnclaimParams,
   ExtendDeadlineParams,
+  ReopenBountyParams,
+  ReassignBountyParams,
+  SubmitWorkParams,
   FeeBumpRetryOptions,
   MergeMintSdkError,
   RetryOptions,
@@ -629,6 +632,113 @@ export class MergeMintSDK {
       u32ToScVal(params.newDeadline),
     ];
     return this.buildTransaction("extend_deadline", args, sourceAccount);
+  }
+
+  /**
+   * Builds a `reopen_bounty` transaction that puts a bounty whose deadline
+   * passed back into `open` status so contributors can claim and work on it
+   * again.  Only the original creator may call this.  Not signed or submitted.
+   *
+   * @param params - {@link ReopenBountyParams}: creator address, bounty id,
+   * and new deadline (Unix timestamp in seconds).
+   * @param sourceAccount - Address that funds and signs the transaction.
+   * @returns The assembled transaction as a base64 XDR string.
+   * @throws {@link SimulationFailedError} (or subclass) if the contract rejects
+   * the reopen — e.g. the bounty was already refunded (`refund_reopen`), the
+   * new deadline is not in the future, or the caller is not the bounty creator.
+   * @throws {@link MergeMintSdkError} with `INVALID_ARGUMENT` if `newDeadline`
+   * is not a positive integer.
+   */
+  async reopenBounty(
+    params: ReopenBountyParams,
+    sourceAccount: string
+  ): Promise<string> {
+    if (!Number.isInteger(params.newDeadline) || params.newDeadline <= 0) {
+      throw new MergeMintSdkError(
+        "reopenBounty: newDeadline must be a positive Unix timestamp (seconds).",
+        "INVALID_ARGUMENT"
+      );
+    }
+    const args = [
+      addressToScVal(params.creator),
+      hexToBytesN(params.bountyId),
+      u32ToScVal(params.newDeadline),
+    ];
+    return this.buildTransaction("reopen_bounty", args, sourceAccount);
+  }
+
+  /**
+   * Builds a `reassign_bounty` transaction that moves a claimed bounty from
+   * the current assignee to a different contributor.  Only the original
+   * creator may reassign, and the new assignee must pass the same eligibility
+   * checks as `claim_bounty`.  Not signed or submitted.
+   *
+   * @param params - {@link ReassignBountyParams}: creator address, bounty id,
+   * and the new assignee's address.
+   * @param sourceAccount - Address that funds and signs the transaction.
+   * @returns The assembled transaction as a base64 XDR string.
+   * @throws {@link SimulationFailedError} (or subclass) if the contract rejects
+   * the reassignment — e.g. a dispute is open on the bounty, the new assignee
+   * does not meet the minimum reputation, or the caller is not the creator.
+   * @throws {@link MergeMintSdkError} with `INVALID_ARGUMENT` if `newAssignee`
+   * is empty.
+   */
+  async reassignBounty(
+    params: ReassignBountyParams,
+    sourceAccount: string
+  ): Promise<string> {
+    if (!params.newAssignee || params.newAssignee.trim() === "") {
+      throw new MergeMintSdkError(
+        "reassignBounty: newAssignee must be a non-empty address.",
+        "INVALID_ARGUMENT"
+      );
+    }
+    const args = [
+      addressToScVal(params.creator),
+      hexToBytesN(params.bountyId),
+      addressToScVal(params.newAssignee),
+    ];
+    return this.buildTransaction("reassign_bounty", args, sourceAccount);
+  }
+
+  /**
+   * Builds a `submit_work` transaction through which the assignee signals that
+   * their work is ready for review.  Creator and verifiers review the
+   * submission before `complete_bounty` distributes the reward.  Not signed or
+   * submitted.
+   *
+   * @param params - {@link SubmitWorkParams}: assignee address, bounty id, and
+   * a submission note (mapped to a contract `Symbol`, so it must respect the
+   * 32-character Symbol limit).
+   * @param sourceAccount - Address that funds and signs the transaction.
+   * @returns The assembled transaction as a base64 XDR string.
+   * @throws {@link SimulationFailedError} (or subclass) if the contract rejects
+   * the submission — e.g. the caller is not an assignee on the bounty.
+   * @throws {@link MergeMintSdkError} with `INVALID_ARGUMENT` if `submission`
+   * is empty or exceeds the 32-character Symbol limit.
+   */
+  async submitWork(
+    params: SubmitWorkParams,
+    sourceAccount: string
+  ): Promise<string> {
+    if (!params.submission || params.submission.length === 0) {
+      throw new MergeMintSdkError(
+        "submitWork: submission must be a non-empty note or reference.",
+        "INVALID_ARGUMENT"
+      );
+    }
+    if (params.submission.length > 32) {
+      throw new MergeMintSdkError(
+        "submitWork: submission exceeds the 32-character Symbol limit.",
+        "INVALID_ARGUMENT"
+      );
+    }
+    const args = [
+      addressToScVal(params.assignee),
+      hexToBytesN(params.bountyId),
+      symbolToScVal(params.submission),
+    ];
+    return this.buildTransaction("submit_work", args, sourceAccount);
   }
 
   // === #922 Transaction submission with fee-bump retry
