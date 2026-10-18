@@ -7,6 +7,7 @@ import { StatusBadge } from '../components/StatusBadge';
 import { BountyDetailSkeleton } from '../components/BountyDetailSkeleton';
 import { BountyErrorBoundary } from '../components/BountyErrorBoundary';
 import { TopUpModal } from '../components/TopUpModal';
+import { SponsorModal, Sponsor } from '../components/SponsorModal';
 import { ExtendDeadline } from '../components/ExtendDeadline';
 import { CancelBountyDialog } from '../components/CancelBountyDialog';
 import { MilestoneTracker } from '../components/MilestoneTracker';
@@ -31,6 +32,7 @@ function BountyDetailInner() {
   // Modal/dialog visibility flags.
   const [showTopUp, setShowTopUp] = useState(false);
   const [showCancel, setShowCancel] = useState(false);
+  const [showSponsor, setShowSponsor] = useState(false);
 
   function fetchBounty() {
     if (!id) return;
@@ -86,6 +88,11 @@ function BountyDetailInner() {
 
   const isOpen = bounty.status === 'open';
 
+  const sponsors: Sponsor[] = (bounty.sponsors ?? []).map((s) => ({
+    address: s.address,
+    amount: s.amount,
+  }));
+
   return (
     <div className="bounty-detail-page">
       <h1>{bounty.title}</h1>
@@ -102,6 +109,15 @@ function BountyDetailInner() {
       <button onClick={handleClaim} disabled={claiming || !isOpen}>
         {claiming ? t('claiming') : t('claim_bounty')}
       </button>
+      {isOpen && (
+        <button
+          type="button"
+          onClick={() => setShowSponsor(true)}
+          className="sponsor-open-button"
+        >
+          Sponsor Bounty
+        </button>
+      )}
       {isCreator && isOpen && (
         <>
           <button
@@ -123,6 +139,23 @@ function BountyDetailInner() {
       {isCreator && bounty.deadline != null && (
         <ExtendDeadline bounty={bounty} network={CONFIGURED_NETWORK} onSuccess={fetchBounty} />
       )}
+      <div className="bounty-sponsors">
+        <h2>Sponsors</h2>
+        {sponsors.length === 0 ? (
+          <p className="bounty-sponsors-empty">No sponsors yet.</p>
+        ) : (
+          <ul>
+            {sponsors.map((sponsor) => (
+              <li key={sponsor.address} className="bounty-sponsor">
+                <span className="bounty-sponsor-address">{sponsor.address}</span>
+                <span className="bounty-sponsor-amount">
+                  {sponsor.amount} {bounty.rewardToken ?? 'XLM'}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
       <TopUpModal
         isOpen={showTopUp}
         onClose={() => setShowTopUp(false)}
@@ -131,6 +164,14 @@ function BountyDetailInner() {
         rewardToken="XLM"
         isCreator={isCreator}
         onTopUp={handleTopUp}
+      />
+      <SponsorModal
+        isOpen={showSponsor}
+        onClose={() => setShowSponsor(false)}
+        bountyId={bounty.id}
+        rewardToken={bounty.rewardToken ?? 'XLM'}
+        sponsors={sponsors}
+        onSponsored={fetchBounty}
       />
       <CancelBountyDialog
         isOpen={showCancel}
@@ -156,4 +197,3 @@ export function BountyDetail() {
     </BountyErrorBoundary>
   );
 }
-
