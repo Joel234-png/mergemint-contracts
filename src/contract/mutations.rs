@@ -6,6 +6,31 @@ use crate::symbols::{
 /// Minimum reward amount enforced at bounty creation.
 const MIN_REWARD_AMOUNT: i128 = 100;
 
+/// Maximum number of tags a bounty may carry. Documented in
+/// `docs/contract-reference.md`. Enforced by `validate_tags`, used from both
+/// `create_bounty` and `update_tags` so a bounty can never accumulate more
+/// tags (or duplicates) after creation than it could at creation time.
+const MAX_TAGS: u32 = 5;
+
+/// Validate a tag list: reject more than `MAX_TAGS` entries, reject
+/// duplicates, and reject any tag not on the allow-list (via
+/// `symbols::validate_symbol_or_fail`).
+fn validate_tags(env: &Env, tags: &Vec<Symbol>) {
+    if tags.len() > MAX_TAGS {
+        fail(ContractError::TooManyTags);
+    }
+
+    for i in 0..tags.len() {
+        let tag = tags.get(i).unwrap();
+        symbols::validate_symbol_or_fail(env, SymbolKind::Tag, &tag);
+        for j in (i + 1)..tags.len() {
+            if tags.get(j).unwrap() == tag {
+                fail(ContractError::DuplicateTag);
+            }
+        }
+    }
+}
+
 /// Verify a bounty's status is one of `allowed`, failing with `err` otherwise.
 ///
 /// Centralizes the status-transition guards that used to be duplicated
@@ -215,13 +240,7 @@ impl MergeMintContract {
             fail(ContractError::RewardBelowMinimum);
         }
 
-        if tags.len() > 5 {
-            fail(ContractError::TooManyTags);
-        }
-
-        for tag in tags.iter() {
-            symbols::validate_symbol_or_fail(&env, SymbolKind::Tag, &tag);
-        }
+        validate_tags(&env, &tags);
 
         if max_assignees < 1 {
             fail(ContractError::MaxAssigneesMustBePositive);
@@ -948,6 +967,44 @@ impl MergeMintContract {
         storage::store_bounty(&env, &bounty_id, &bounty);
 
         events::emit_deadline_extended(&env, &bounty_id, &creator, new_deadline);
+    }
+
+    /// Replace a bounty's tag list.
+    ///
+    /// Restricted to the bounty creator. Subject to the same validation as
+    /// `create_bounty`: at most `MAX_TAGS` tags, no duplicates, and each tag
+    /// must be on the allow-list.
+    ///
+    /// # Arguments
+    /// * `creator` - The wallet that created the bounty.
+    /// * `bounty_id` - The identifier of the bounty to update.
+    /// * `tags` - The new tag list, replacing the existing one entirely.
+    ///
+    /// # Panics
+    /// * If `bounty_id` does not exist (`ContractError::BountyNotFound`).
+    /// * If `creator` is not the bounty creator (`ContractError::NotBountyCreator`).
+    /// * If `tags.len() > MAX_TAGS` (`ContractError::TooManyTags`).
+    /// * If `tags` contains a duplicate (`ContractError::DuplicateTag`).
+    /// * If any tag is not on the allow-list (`ContractError::InvalidTag`).
+    ///
+    /// # Authorization
+    /// Requires auth from `creator`.
+    pub fn update_tags(env: Env, creator: Address, bounty_id: BountyId, tags: Vec<Symbol>) {
+        creator.require_auth();
+
+        let mut bounty = match storage::get_bounty(&env, &bounty_id) {
+            Some(b) => b,
+            None => fail(ContractError::BountyNotFound),
+        };
+
+        if creator != bounty.creator {
+            fail(ContractError::NotBountyCreator);
+        }
+
+        validate_tags(&env, &tags);
+
+        bounty.tags = tags;
+        storage::store_bounty(&env, &bounty_id, &bounty);
     }
 }
 

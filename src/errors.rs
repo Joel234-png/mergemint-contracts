@@ -42,6 +42,7 @@ pub enum ContractError {
     MilestoneRewardsMismatch,
     RewardAmountOverflow,
     MetadataEmpty,
+    DuplicateTag,
 }
 
 /// Convert a `ContractError` to its canonical panic message and panic.
@@ -91,5 +92,6 @@ pub const fn message(e: ContractError) -> &'static str {
         ContractError::MilestoneRewardsMismatch => "milestone rewards do not sum to reward_amount",
         ContractError::RewardAmountOverflow => "reward amount arithmetic overflow",
         ContractError::MetadataEmpty => "metadata must not be empty",
+        ContractError::DuplicateTag => "duplicate tag",
     }
 }
