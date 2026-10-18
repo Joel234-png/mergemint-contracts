@@ -18,6 +18,13 @@ export function PageSkeleton() {
           padding: 2rem;
           animation: page-skeleton-pulse 1.4s ease-in-out infinite;
         }
+        @media (prefers-reduced-motion: reduce) {
+          .page-skeleton,
+          .page-skeleton__block {
+            animation: none;
+            opacity: 0.75;
+          }
+        }
         .page-skeleton__block {
           background-color: #e2e2e2;
           border-radius: 4px;
