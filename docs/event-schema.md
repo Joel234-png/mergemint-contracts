@@ -64,6 +64,12 @@ Contract events emitted for indexer integration.
 - **Trigger**: A third party co-funds a bounty via `sponsor_bounty`
 - **Purpose**: Notify indexer of additional escrowed funds and the sponsor's contribution
 
+### work_submitted
+- **Topics**: `(Symbol("work_submitted"), assignee_address)`
+- **Data**: `(bounty_id, submission_hash)`
+- **Trigger**: Assignee submits work via `submit_work`
+- **Purpose**: Notify indexer/verifiers that a bounty is ready for review
+
 ### approval_recorded
 - **Topics**: `(Symbol("approval_recorded"), verifier_address)`
 - **Data**: `(bounty_id, approval_count)`

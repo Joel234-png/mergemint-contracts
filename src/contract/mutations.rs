@@ -577,6 +577,13 @@ impl MergeMintContract {
             return;
         }
 
+        // When verifiers are configured, a work submission must exist first —
+        // approval without a recorded submission leaves verifiers with
+        // nothing concrete to review.
+        if storage::get_submission(&env, &bounty_id).is_none() {
+            fail(ContractError::SubmissionRequired);
+        }
+
         let required = bounty.required_verifiers.clone().unwrap();
         let is_authorized = required.iter().any(|v| v == verifier);
         if !is_authorized {
@@ -960,6 +967,61 @@ impl MergeMintContract {
         storage::add_open_bounty(&env, &bounty_id);
 
         events::emit_bounty_reopened(&env, &bounty_id, &creator, new_deadline);
+    }
+
+    /// Record a work submission for an in-progress bounty.
+    ///
+    /// Stores a submission hash (e.g. the hash of a PR URL) and moves the
+    /// bounty to the `"submitted"` status, signalling to creators and
+    /// verifiers that the assignee's work is ready for review. When the
+    /// bounty has `required_verifiers` configured, `approve_completion` will
+    /// require a submission to exist before it can execute.
+    ///
+    /// # Arguments
+    /// * `assignee` - The contributor submitting work. Must be a current
+    ///   assignee of the bounty.
+    /// * `bounty_id` - The bounty being worked on.
+    /// * `submission_hash` - 32-byte hash identifying the submitted work.
+    ///
+    /// # Panics
+    /// * If `bounty_id` does not exist (`ContractError::BountyNotFound`).
+    /// * If the bounty is not `"in_progress"` (`ContractError::BountyNotInProgress`).
+    /// * If `assignee` is not one of the bounty's assignees (`ContractError::NotAssignee`).
+    ///
+    /// # Authorization
+    /// Requires auth from `assignee`.
+    pub fn submit_work(
+        env: Env,
+        assignee: Address,
+        bounty_id: BountyId,
+        submission_hash: BytesN<32>,
+    ) {
+        assignee.require_auth();
+
+        let mut bounty = match storage::get_bounty(&env, &bounty_id) {
+            Some(b) => b,
+            None => fail(ContractError::BountyNotFound),
+        };
+
+        ensure_status(
+            &bounty,
+            &[Symbol::new(&env, STATUS_IN_PROGRESS)],
+            ContractError::BountyNotInProgress,
+        );
+
+        let is_assignee = bounty.assignees.iter().any(|(addr, _)| addr == assignee);
+        if !is_assignee {
+            fail(ContractError::NotAssignee);
+        }
+
+        storage::set_submission(&env, &bounty_id, &submission_hash);
+
+        let previous_status = bounty.status.clone();
+        bounty.status = Symbol::new(&env, STATUS_SUBMITTED);
+        storage::store_bounty(&env, &bounty_id, &bounty);
+        storage::move_bounty_status(&env, &bounty_id, &previous_status, &bounty.status);
+
+        events::emit_work_submitted(&env, &bounty_id, &assignee, &submission_hash);
     }
 
     /// Add third-party escrowed funds to a bounty's reward pool.

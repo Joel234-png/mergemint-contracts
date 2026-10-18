@@ -233,6 +233,12 @@ impl MergeMintContract {
         paginate(&env, newest_first, Some(offset), limit).0
     }
 
+    /// Return the submission hash recorded by `submit_work` for `bounty_id`,
+    /// or `None` if no work has been submitted yet.
+    pub fn get_submission(env: Env, bounty_id: BountyId) -> Option<BytesN<32>> {
+        storage::get_submission(&env, &bounty_id)
+    }
+
     /// Return the list of `(sponsor_address, contributed_amount)` pairs for a
     /// bounty, as tracked by `sponsor_bounty`. Empty if nobody has sponsored it.
     pub fn get_bounty_sponsors(env: Env, bounty_id: BountyId) -> Vec<(Address, i128)> {

@@ -83,6 +83,19 @@ pub fn emit_bounty_sponsored(
     );
 }
 
+pub fn emit_work_submitted(
+    env: &Env,
+    bounty_id: &BountyId,
+    assignee: &Address,
+    submission_hash: &BytesN<32>,
+) {
+    let topic = Symbol::new(env, "work_submitted");
+    env.events().publish(
+        (topic, assignee.clone()),
+        (bounty_id.clone(), submission_hash.clone()),
+    );
+}
+
 pub fn emit_deadline_extended(
     env: &Env,
     bounty_id: &BountyId,
