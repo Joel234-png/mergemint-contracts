@@ -75,6 +75,18 @@ pub struct Milestone {
     pub deadline: Option<u32>,
 }
 
+/// Lightweight read-only view of a single milestone, returned by
+/// `get_milestones` so frontends can render milestone progress without
+/// decoding the whole `Bounty` struct.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct MilestoneView {
+    pub index: u32,
+    pub reward: i128,
+    pub completed: bool,
+    pub deadline: Option<u32>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[contracttype]
 pub struct Bounty {

@@ -242,6 +242,34 @@ impl MergeMintContract {
     /// The list is maintained in `DataKey::ContributorBounties(creator)` and
     /// appended to on each `create_bounty` call. Returns an empty `Vec` if the
     /// address has never created a bounty.
+    /// Return a lightweight view of each milestone on `bounty_id`, in order.
+    ///
+    /// Avoids decoding the full `Bounty` (and its `Vec<(Address, u32)>`
+    /// assignee list) just to render milestone progress. Each view carries
+    /// the milestone's index, reward amount, completion flag and optional
+    /// per-milestone deadline. Returns an empty `Vec` for a bounty with no
+    /// milestones configured (i.e. an all-or-nothing bounty).
+    ///
+    /// # Panics
+    /// * If `bounty_id` does not exist (`ContractError::BountyNotFound`).
+    pub fn get_milestones(env: Env, bounty_id: BountyId) -> Vec<crate::types::MilestoneView> {
+        let bounty = match storage::get_bounty(&env, &bounty_id) {
+            Some(b) => b,
+            None => crate::errors::fail(crate::errors::ContractError::BountyNotFound),
+        };
+
+        let mut result = Vec::new(&env);
+        for (idx, milestone) in bounty.milestones.iter().enumerate() {
+            result.push_back(crate::types::MilestoneView {
+                index: idx as u32,
+                reward: milestone.reward,
+                completed: milestone.completed,
+                deadline: milestone.deadline,
+            });
+        }
+        result
+    }
+
     /// Return the address currently configured as contract admin, if any.
     pub fn get_admin(env: Env) -> Option<Address> {
         storage::get_admin(&env)
