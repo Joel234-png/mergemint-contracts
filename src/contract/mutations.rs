@@ -926,6 +926,94 @@ impl MergeMintContract {
         events::emit_bounty_reopened(&env, &bounty_id, &creator, new_deadline);
     }
 
+    /// Reassign a `"in_progress"` (claimed) bounty's single assignee to a new
+    /// contributor.
+    ///
+    /// Applies the same eligibility checks `claim_bounty` applies to the new
+    /// assignee (not the creator, not already assigned, no other active claim,
+    /// meets `min_reputation`). The previous assignee's active-claim counter is
+    /// decremented and the new assignee's is incremented, so
+    /// `get_contributor_active_bounty` reflects the swap for both addresses.
+    ///
+    /// # Arguments
+    /// * `creator` - The wallet that created the bounty.
+    /// * `bounty_id` - The bounty to reassign.
+    /// * `new_assignee` - The contributor who takes over the claim.
+    ///
+    /// # Panics
+    /// * If `bounty_id` does not exist (`ContractError::BountyNotFound`).
+    /// * If `creator` is not the bounty creator (`ContractError::NotBountyCreator`).
+    /// * If the bounty is not `"in_progress"` (`ContractError::BountyNotInProgress`) —
+    ///   this also rejects reassignment while a dispute is open, since a disputed
+    ///   bounty is never in `"in_progress"` status.
+    /// * If the bounty has no assignee (`ContractError::BountyHasNoAssignee`).
+    /// * If `new_assignee` is already the current assignee (`ContractError::AlreadyClaimed`).
+    /// * If `new_assignee` is the bounty creator (`ContractError::CreatorCannotClaim`).
+    /// * If `new_assignee` already has another active claim (`ContractError::ContributorHasActiveClaim`).
+    /// * If `new_assignee`'s reputation is below `min_reputation` (`ContractError::ReputationTooLow`).
+    ///
+    /// # Authorization
+    /// Requires auth from `creator`.
+    pub fn reassign_bounty(env: Env, creator: Address, bounty_id: BountyId, new_assignee: Address) {
+        creator.require_auth();
+
+        let mut bounty = match storage::get_bounty(&env, &bounty_id) {
+            Some(b) => b,
+            None => fail(ContractError::BountyNotFound),
+        };
+
+        if creator != bounty.creator {
+            fail(ContractError::NotBountyCreator);
+        }
+
+        // Only "in_progress" bounties are reassignable. A disputed bounty is
+        // never in this status, so this guard also blocks reassignment while a
+        // dispute is open.
+        ensure_status(
+            &bounty,
+            &[Symbol::new(&env, STATUS_IN_PROGRESS)],
+            ContractError::BountyNotInProgress,
+        );
+
+        if bounty.assignees.is_empty() {
+            fail(ContractError::BountyHasNoAssignee);
+        }
+
+        let (old_assignee, share_bp) = bounty.assignees.get(0).unwrap();
+
+        if new_assignee == old_assignee {
+            fail(ContractError::AlreadyClaimed);
+        }
+
+        if new_assignee == bounty.creator {
+            fail(ContractError::CreatorCannotClaim);
+        }
+
+        let mut new_contrib = storage::get_contributor(&env, &new_assignee)
+            .unwrap_or_else(|| Contributor::new(new_assignee.clone()));
+
+        if new_contrib.active_claims >= 1 {
+            fail(ContractError::ContributorHasActiveClaim);
+        }
+
+        if bounty.min_reputation > 0 && new_contrib.reputation < bounty.min_reputation {
+            fail(ContractError::ReputationTooLow);
+        }
+
+        bounty.assignees.set(0, (new_assignee.clone(), share_bp));
+        storage::store_bounty(&env, &bounty_id, &bounty);
+
+        if let Some(mut old_contrib) = storage::get_contributor(&env, &old_assignee) {
+            decrement_active_claims(&mut old_contrib);
+            storage::store_contributor(&env, &old_assignee, &old_contrib);
+        }
+
+        new_contrib.active_claims += 1;
+        storage::store_contributor(&env, &new_assignee, &new_contrib);
+
+        events::emit_bounty_reassigned(&env, &bounty_id, &old_assignee, &new_assignee);
+    }
+
     /// Extend the deadline of an active bounty.
     ///
     /// Restricted to the bounty creator. The bounty must have an existing deadline

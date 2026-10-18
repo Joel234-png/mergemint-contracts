@@ -52,6 +52,12 @@ Contract events emitted for indexer integration.
 - **Trigger**: Creator reopens an expired bounty via `reopen_bounty`
 - **Purpose**: Notify indexer that an expired bounty is open again with a new deadline
 
+### bounty_reassigned
+- **Topics**: `(Symbol("bounty_reassigned"), old_assignee_address)`
+- **Data**: `(bounty_id, new_assignee_address)`
+- **Trigger**: Creator reassigns a claimed bounty via `reassign_bounty`
+- **Purpose**: Notify indexer that the assignee on an in-progress bounty changed
+
 ### approval_recorded
 - **Topics**: `(Symbol("approval_recorded"), verifier_address)`
 - **Data**: `(bounty_id, approval_count)`

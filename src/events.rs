@@ -56,6 +56,19 @@ pub fn emit_bounty_reopened(
         .publish((topic, creator.clone()), (bounty_id.clone(), new_deadline));
 }
 
+pub fn emit_bounty_reassigned(
+    env: &Env,
+    bounty_id: &BountyId,
+    old_assignee: &Address,
+    new_assignee: &Address,
+) {
+    let topic = Symbol::new(env, "bounty_reassigned");
+    env.events().publish(
+        (topic, old_assignee.clone()),
+        (bounty_id.clone(), new_assignee.clone()),
+    );
+}
+
 pub fn emit_deadline_extended(
     env: &Env,
     bounty_id: &BountyId,
