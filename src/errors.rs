@@ -44,6 +44,8 @@ pub enum ContractError {
     MetadataEmpty,
     ClaimWindowNotElapsed,
     NoActiveClaim,
+    MilestoneDeadlineInvalid,
+    MilestoneDeadlinePassed,
     NotAdmin,
     AdminAlreadySet,
 }
@@ -97,6 +99,10 @@ pub const fn message(e: ContractError) -> &'static str {
         ContractError::MetadataEmpty => "metadata must not be empty",
         ContractError::ClaimWindowNotElapsed => "claim window has not elapsed yet",
         ContractError::NoActiveClaim => "bounty has no active claim to release",
+        ContractError::MilestoneDeadlineInvalid => {
+            "milestone deadlines must be non-decreasing and not exceed the bounty deadline"
+        }
+        ContractError::MilestoneDeadlinePassed => "milestone deadline has passed",
         ContractError::NotAdmin => "caller is not the contract admin",
         ContractError::AdminAlreadySet => "admin has already been initialized",
     }

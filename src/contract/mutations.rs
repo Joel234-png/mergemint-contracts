@@ -224,11 +224,28 @@ impl MergeMintContract {
 
         if !milestones.is_empty() {
             let mut total: i128 = 0;
+            let mut previous_deadline: Option<u32> = None;
             for m in milestones.iter() {
                 total = match total.checked_add(m.reward) {
                     Some(sum) => sum,
                     None => fail(ContractError::RewardAmountOverflow),
                 };
+
+                // Milestone deadlines (when set) must be non-decreasing and
+                // must not exceed the bounty's own deadline.
+                if let Some(milestone_deadline) = m.deadline {
+                    if let Some(prev) = previous_deadline {
+                        if milestone_deadline < prev {
+                            fail(ContractError::MilestoneDeadlineInvalid);
+                        }
+                    }
+                    if let Some(bounty_deadline) = deadline {
+                        if milestone_deadline > bounty_deadline {
+                            fail(ContractError::MilestoneDeadlineInvalid);
+                        }
+                    }
+                    previous_deadline = Some(milestone_deadline);
+                }
             }
             if total != reward_amount {
                 fail(ContractError::MilestoneRewardsMismatch);
@@ -431,6 +448,12 @@ impl MergeMintContract {
         let mut milestone = bounty.milestones.get(idx).unwrap().clone();
         if milestone.completed {
             fail(ContractError::MilestoneAlreadyCompleted);
+        }
+
+        if let Some(milestone_deadline) = milestone.deadline {
+            if env.ledger().sequence() > milestone_deadline {
+                fail(ContractError::MilestoneDeadlinePassed);
+            }
         }
 
         for (assignee, _) in bounty.assignees.iter() {

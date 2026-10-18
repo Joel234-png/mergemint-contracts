@@ -67,6 +67,12 @@ pub struct Milestone {
     pub description: Symbol,
     pub reward: i128,
     pub completed: bool,
+    /// Optional ledger sequence deadline for this specific milestone.
+    /// When set, milestones must be ordered non-decreasing by deadline and
+    /// must not exceed the bounty's own deadline (validated in
+    /// `create_bounty`). `None` preserves pre-existing behaviour for bounties
+    /// created before this field existed.
+    pub deadline: Option<u32>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

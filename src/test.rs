@@ -796,11 +796,13 @@ fn test_create_bounty_rejects_milestone_reward_overflow() {
         description: Symbol::new(&env, "m1"),
         reward: i128::MAX,
         completed: false,
+        deadline: None,
     });
     milestones.push_back(Milestone {
         description: Symbol::new(&env, "m2"),
         reward: 1,
         completed: false,
+        deadline: None,
     });
 
     client.create_bounty(
@@ -2605,11 +2607,13 @@ fn test_create_bounty_milestone_reward_overflow() {
         description: Symbol::new(&env, "m1"),
         reward: i128::MAX,
         completed: false,
+        deadline: None,
     });
     milestones.push_back(crate::types::Milestone {
         description: Symbol::new(&env, "m2"),
         reward: 1,
         completed: false,
+        deadline: None,
     });
 
     // reward_amount is irrelevant here — overflow is caught before the
@@ -2644,11 +2648,13 @@ fn test_create_bounty_milestone_checked_add_valid() {
         description: Symbol::new(&env, "m1"),
         reward: 400,
         completed: false,
+        deadline: None,
     });
     milestones.push_back(crate::types::Milestone {
         description: Symbol::new(&env, "m2"),
         reward: 600,
         completed: false,
+        deadline: None,
     });
 
     // Should succeed: 400 + 600 == 1000 == reward_amount.
@@ -2883,6 +2889,7 @@ fn test_require_auth_coverage_matrix() {
         description: Symbol::new(&env, "ms"),
         reward: 1000,
         completed: false,
+        deadline: None,
     });
     let bounty_id7 = client.create_bounty(
         &creator,
