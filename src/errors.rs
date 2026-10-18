@@ -46,6 +46,9 @@ pub enum ContractError {
     NotAdmin,
     NotAssignee,
     ClaimCooldownActive,
+    OnlyPartyCanAddEvidence,
+    EvidenceLimitReached,
+    DisputeAlreadyResolved,
 }
 
 /// Convert a `ContractError` to its canonical panic message and panic.
@@ -99,5 +102,10 @@ pub const fn message(e: ContractError) -> &'static str {
         ContractError::NotAdmin => "caller is not the contract admin",
         ContractError::NotAssignee => "caller is not an assignee on this bounty",
         ContractError::ClaimCooldownActive => "claim cooldown is still active for this contributor",
+        ContractError::OnlyPartyCanAddEvidence => {
+            "only the creator or assignee may add dispute evidence"
+        }
+        ContractError::EvidenceLimitReached => "dispute evidence limit reached",
+        ContractError::DisputeAlreadyResolved => "dispute has already been resolved",
     }
 }

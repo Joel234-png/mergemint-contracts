@@ -39,6 +39,17 @@ pub fn emit_bounty_unclaimed(env: &Env, bounty_id: &BountyId, contributor: &Addr
         .publish((topic, contributor.clone()), bounty_id.clone());
 }
 
+pub fn emit_dispute_evidence_added(
+    env: &Env,
+    bounty_id: &BountyId,
+    caller: &Address,
+    hash: &BytesN<32>,
+) {
+    let topic = Symbol::new(env, "dispute_evidence_added");
+    env.events()
+        .publish((topic, caller.clone()), (bounty_id.clone(), hash.clone()));
+}
+
 pub fn emit_bounty_cancelled(env: &Env, bounty_id: &BountyId, creator: &Address) {
     let topic = Symbol::new(env, "bounty_cancelled");
     env.events()

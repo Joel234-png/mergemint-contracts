@@ -813,6 +813,52 @@ impl MergeMintContract {
         events::emit_dispute_resolved(&env, &bounty_id, &arbitrator, &resolution);
     }
 
+    /// Attach an evidence hash to an open dispute.
+    ///
+    /// Only the bounty creator or an assignee may call this. Evidence can no
+    /// longer be added once the dispute has been resolved (status is no
+    /// longer `"disputed"`), and at most `storage::MAX_DISPUTE_EVIDENCE`
+    /// entries are retained per dispute.
+    ///
+    /// # Arguments
+    /// * `caller` - The creator or an assignee of the disputed bounty.
+    /// * `bounty_id` - The disputed bounty.
+    /// * `hash` - A 32-byte hash referencing off-chain evidence.
+    ///
+    /// # Panics
+    /// * If `bounty_id` does not exist.
+    /// * If the bounty is not currently in `"disputed"` status.
+    /// * If `caller` is neither the creator nor an assignee.
+    /// * If the evidence cap has already been reached.
+    ///
+    /// # Authorization
+    /// Requires auth from `caller`.
+    pub fn add_dispute_evidence(env: Env, caller: Address, bounty_id: BountyId, hash: BytesN<32>) {
+        caller.require_auth();
+
+        let bounty = match storage::get_bounty(&env, &bounty_id) {
+            Some(b) => b,
+            None => fail(ContractError::BountyNotFound),
+        };
+
+        if bounty.status != Symbol::new(&env, STATUS_DISPUTED) {
+            fail(ContractError::DisputeAlreadyResolved);
+        }
+
+        let is_assignee = bounty.assignees.iter().any(|(addr, _)| addr == caller);
+        if caller != bounty.creator && !is_assignee {
+            fail(ContractError::OnlyPartyCanAddEvidence);
+        }
+
+        let existing = storage::get_dispute_evidence(&env, &bounty_id);
+        if existing.len() >= storage::MAX_DISPUTE_EVIDENCE {
+            fail(ContractError::EvidenceLimitReached);
+        }
+
+        storage::append_dispute_evidence(&env, &bounty_id, &hash);
+        events::emit_dispute_evidence_added(&env, &bounty_id, &caller, &hash);
+    }
+
     /// Update the on-chain metadata URI for a contributor profile.
     ///
     /// The `metadata` value is typically an IPFS hash or URL pointing to a JSON

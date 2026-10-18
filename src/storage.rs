@@ -734,3 +734,30 @@ pub fn get_unclaimed_at(env: &Env, bounty_id: &BountyId, contributor: &Address) 
     let key = DataKey::UnclaimedAt(bounty_id.clone(), contributor.clone());
     env.storage().temporary().get(&key)
 }
+
+// ── Dispute evidence ──────────────────────────────────────────────────────────
+
+/// Maximum number of evidence hashes retained per dispute.
+pub const MAX_DISPUTE_EVIDENCE: u32 = 10;
+
+/// Returns the evidence hashes attached to `bounty_id`'s dispute, if any.
+pub fn get_dispute_evidence(
+    env: &Env,
+    bounty_id: &BountyId,
+) -> Vec<soroban_sdk::BytesN<32>> {
+    let key = DataKey::DisputeEvidence(bounty_id.clone());
+    let result: Option<Vec<soroban_sdk::BytesN<32>>> = env.storage().persistent().get(&key);
+    if result.is_some() {
+        extend(env, &key);
+    }
+    result.unwrap_or_else(|| Vec::new(env))
+}
+
+/// Append `hash` to `bounty_id`'s dispute evidence list.
+pub fn append_dispute_evidence(env: &Env, bounty_id: &BountyId, hash: &soroban_sdk::BytesN<32>) {
+    let mut evidence = get_dispute_evidence(env, bounty_id);
+    evidence.push_back(hash.clone());
+    let key = DataKey::DisputeEvidence(bounty_id.clone());
+    env.storage().persistent().set(&key, &evidence);
+    extend(env, &key);
+}

@@ -62,6 +62,8 @@ pub enum DataKey {
     /// Ledger sequence at which `contributor` last unclaimed `bounty_id`.
     /// Stored in temporary storage so it naturally expires.
     UnclaimedAt(BountyId, Address),
+    /// Evidence hashes attached to a disputed bounty.
+    DisputeEvidence(BountyId),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

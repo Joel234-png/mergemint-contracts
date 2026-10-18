@@ -277,4 +277,9 @@ impl MergeMintContract {
             storage::get_claim_cooldown(&env),
         )
     }
+
+    /// Return the evidence hashes attached to `bounty_id`'s dispute, if any.
+    pub fn get_dispute_evidence(env: Env, bounty_id: BountyId) -> Vec<soroban_sdk::BytesN<32>> {
+        storage::get_dispute_evidence(&env, &bounty_id)
+    }
 }
