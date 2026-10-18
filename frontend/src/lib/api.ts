@@ -26,6 +26,21 @@ export type SortOrder = 'asc' | 'desc';
 
 export type LeaderboardRange = 'weekly' | 'monthly' | 'all';
 
+// A single reputation change event, used to plot reputation over time (#1070).
+export type ReputationHistoryEntry = {
+  id: string;
+  // Unix timestamp (seconds) of when the reputation change occurred.
+  timestamp: number;
+  // Signed delta applied to the contributor's reputation.
+  delta: number;
+  // Human-readable reason (e.g. "Bounty completed", "Bounty cancelled").
+  reason: string;
+};
+
+export type ReputationHistoryPage = {
+  entries: ReputationHistoryEntry[];
+};
+
 export type ListBountiesParams = {
   status?: BountyStatus;
   tag?: string;
@@ -87,6 +102,10 @@ export const api = {
   },
   getContributor(address: string): Promise<Contributor> {
     return request(`/contributors/${address}`);
+  },
+  // Reputation history for a contributor, used to plot reputation over time (#1070).
+  getReputationHistory(address: string): Promise<ReputationHistoryPage> {
+    return request(`/contributors/${encodeURIComponent(address)}/reputation-history`);
   },
   // The leaderboard supports a time-range filter (#1069). `range` is passed
   // through as a query parameter so the backend can scope the rankings.
