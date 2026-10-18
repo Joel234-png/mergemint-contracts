@@ -9,6 +9,7 @@ export interface UseInfiniteBountiesOptions {
   status?: BountyStatus | "all";
   ownership?: OwnershipFilter;
   address?: string | null;
+  query?: string;
   limit?: number;
   fetchFn?: (params: ListBountiesParams) => Promise<BountyPage>;
   rootMargin?: string;
@@ -37,6 +38,7 @@ export function useInfiniteBounties({
   status = "all",
   ownership = "all",
   address,
+  query,
   limit,
   fetchFn,
   rootMargin = "100px",
@@ -57,6 +59,8 @@ export function useInfiniteBounties({
   const requestIdRef = useRef(0);
   const loadMoreRef = useRef<() => Promise<void>>(() => Promise.resolve());
 
+  const normalizedQuery = query?.trim() ? query.trim() : undefined;
+
   const fetchPage = useCallback(
     async (cursor?: string, isInitial = false) => {
       const currentRequestId = ++requestIdRef.current;
@@ -68,6 +72,7 @@ export function useInfiniteBounties({
       try {
         const params: ListBountiesParams = {
           status: status === "all" ? undefined : status,
+          q: normalizedQuery,
           cursor,
           limit,
         };
@@ -100,7 +105,7 @@ export function useInfiniteBounties({
         }
       }
     },
-    [status, ownership, address, limit, fetchFn],
+    [status, ownership, address, normalizedQuery, limit, fetchFn],
   );
 
   const loadMore = useCallback(async () => {
@@ -117,6 +122,9 @@ export function useInfiniteBounties({
   }, [fetchPage]);
 
   useEffect(() => {
+    // Reset pagination whenever the query (or other filters) change.
+    setNextCursor(null);
+    nextCursorRef.current = null;
     fetchPage(undefined, true);
   }, [fetchPage]);
 
