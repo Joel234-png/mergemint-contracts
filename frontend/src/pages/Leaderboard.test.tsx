@@ -21,9 +21,9 @@ afterEach(() => {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function renderLeaderboard(): string {
+function renderLeaderboard(initialEntry = '/'): string {
   return renderToStaticMarkup(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <Leaderboard />
     </MemoryRouter>,
   );
@@ -102,5 +102,39 @@ describe('Leaderboard', () => {
       </MemoryRouter>,
     );
     expect(markup).toContain(`/contributors/${addr}`);
+  });
+
+  it('renders the weekly, monthly and all-time range tabs', () => {
+    vi.mocked(api.getLeaderboard).mockReturnValue(new Promise(() => {}));
+    const markup = renderLeaderboard();
+    expect(markup).toContain('Weekly');
+    expect(markup).toContain('Monthly');
+    expect(markup).toContain('All-time');
+  });
+
+  it('defaults to the all-time range when no range is in the URL', () => {
+    vi.mocked(api.getLeaderboard).mockReturnValue(new Promise(() => {}));
+    const markup = renderLeaderboard('/');
+    expect(markup).toContain('leaderboard__range-tab--active');
+    expect(markup).toContain('All-time');
+  });
+
+  it('initializes the selected range from the URL query parameter', () => {
+    vi.mocked(api.getLeaderboard).mockReturnValue(new Promise(() => {}));
+    const markup = renderLeaderboard('/?range=weekly');
+    expect(markup).toContain('leaderboard__range-tab--active');
+    expect(markup).toContain('Weekly');
+  });
+
+  it('passes the selected range to the backend leaderboard route', () => {
+    vi.mocked(api.getLeaderboard).mockReturnValue(new Promise(() => {}));
+    renderLeaderboard('/?range=monthly');
+    expect(api.getLeaderboard).toHaveBeenCalledWith('monthly');
+  });
+
+  it('falls back to all-time for an invalid range in the URL', () => {
+    vi.mocked(api.getLeaderboard).mockReturnValue(new Promise(() => {}));
+    renderLeaderboard('/?range=bogus');
+    expect(api.getLeaderboard).toHaveBeenCalledWith('all-time');
   });
 });

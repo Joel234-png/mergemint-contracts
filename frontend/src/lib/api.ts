@@ -24,6 +24,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export type BountySortField = 'reward' | 'deadline' | 'created';
 export type SortOrder = 'asc' | 'desc';
 
+export type LeaderboardRange = 'weekly' | 'monthly' | 'all';
+
 export type ListBountiesParams = {
   status?: BountyStatus;
   tag?: string;
@@ -86,8 +88,10 @@ export const api = {
   getContributor(address: string): Promise<Contributor> {
     return request(`/contributors/${address}`);
   },
-  getLeaderboard(): Promise<LeaderboardPage> {
-    return request('/contributors/leaderboard');
+  // The leaderboard supports a time-range filter (#1069). `range` is passed
+  // through as a query parameter so the backend can scope the rankings.
+  getLeaderboard(range: LeaderboardRange = 'all'): Promise<LeaderboardPage> {
+    return request(`/contributors/leaderboard${toQuery({ range })}`);
   },
   /**
    * Fetch the reward-token allowlist maintained by the backend.
@@ -139,4 +143,3 @@ export const api = {
     });
   },
 };
-
