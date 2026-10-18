@@ -251,4 +251,15 @@ impl MergeMintContract {
         let all = storage::get_creator_bounties(&env, &creator);
         paginate(&env, all, cursor, limit)
     }
+
+    /// Return the admin-configured cap on concurrent open+claimed bounties
+    /// per creator. `0` means unlimited (the default).
+    pub fn get_creator_open_limit(env: Env) -> u32 {
+        storage::get_creator_open_limit(&env)
+    }
+
+    /// Return the current count of open+claimed bounties for `creator`.
+    pub fn get_creator_open_count(env: Env, creator: Address) -> u32 {
+        storage::get_creator_open_count(&env, &creator)
+    }
 }

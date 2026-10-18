@@ -42,6 +42,8 @@ pub enum ContractError {
     MilestoneRewardsMismatch,
     RewardAmountOverflow,
     MetadataEmpty,
+    CreatorLimitReached,
+    NotAdmin,
 }
 
 /// Convert a `ContractError` to its canonical panic message and panic.
@@ -91,5 +93,7 @@ pub const fn message(e: ContractError) -> &'static str {
         ContractError::MilestoneRewardsMismatch => "milestone rewards do not sum to reward_amount",
         ContractError::RewardAmountOverflow => "reward amount arithmetic overflow",
         ContractError::MetadataEmpty => "metadata must not be empty",
+        ContractError::CreatorLimitReached => "creator has reached the open bounty limit",
+        ContractError::NotAdmin => "caller is not the contract admin",
     }
 }

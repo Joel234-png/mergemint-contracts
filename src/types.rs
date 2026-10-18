@@ -49,6 +49,13 @@ pub enum DataKey {
     /// Paged open-bounties shard. `page` is 0-indexed.
     OpenBountiesPage(u32),
     Approvals(BountyId),
+    /// Contract admin address, set lazily by the first admin-only call.
+    Admin,
+    /// Admin-configured cap on concurrent open+claimed bounties per creator.
+    /// `0` means unlimited (the default).
+    CreatorOpenLimit,
+    /// Current count of open+claimed bounties for a given creator.
+    CreatorOpenCount(Address),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

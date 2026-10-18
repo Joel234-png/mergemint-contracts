@@ -106,6 +106,7 @@ fn complete_bounty_inner(env: Env, bounty_id: BountyId, mut bounty: Bounty) {
         bounty.status = Symbol::new(&env, STATUS_COMPLETED);
         storage::store_bounty(&env, &bounty_id, &bounty);
         storage::move_bounty_status(&env, &bounty_id, &previous_status, &bounty.status);
+        storage::decrement_creator_open_count(&env, &bounty.creator);
         events::emit_bounty_completed(&env, &bounty_id, &primary_assignee);
         return;
     }
@@ -115,6 +116,7 @@ fn complete_bounty_inner(env: Env, bounty_id: BountyId, mut bounty: Bounty) {
     bounty.status = Symbol::new(&env, STATUS_COMPLETED);
     storage::store_bounty(&env, &bounty_id, &bounty);
     storage::move_bounty_status(&env, &bounty_id, &previous_status, &bounty.status);
+    storage::decrement_creator_open_count(&env, &bounty.creator);
 
     let token = TokenClient::new(&env, &bounty.reward_token);
     distribute_payout(
@@ -234,6 +236,11 @@ impl MergeMintContract {
 
         creator.require_auth();
 
+        let limit = storage::get_creator_open_limit(&env);
+        if limit > 0 && storage::get_creator_open_count(&env, &creator) >= limit {
+            fail(ContractError::CreatorLimitReached);
+        }
+
         let count = storage::get_bounty_count(&env);
         let id = generate_bounty_id(&env, count);
 
@@ -258,6 +265,7 @@ impl MergeMintContract {
         storage::add_bounty_to_status(&env, &id, &bounty.status);
         storage::append_creator_bounty(&env, &creator, &id);
         storage::add_open_bounty(&env, &id);
+        storage::increment_creator_open_count(&env, &creator);
 
         events::emit_bounty_created(&env, &id, &creator, &reward_amount);
         id
@@ -579,6 +587,7 @@ impl MergeMintContract {
                 bounty.status = Symbol::new(&env, STATUS_COMPLETED);
                 storage::store_bounty(&env, &bounty_id, &bounty);
                 storage::move_bounty_status(&env, &bounty_id, &previous_status, &bounty.status);
+                storage::decrement_creator_open_count(&env, &bounty.creator);
                 let (primary_assignee, _) = bounty.assignees.get(0).unwrap();
                 events::emit_bounty_completed(&env, &bounty_id, &primary_assignee);
                 return;
@@ -599,6 +608,7 @@ impl MergeMintContract {
             bounty.status = Symbol::new(&env, STATUS_COMPLETED);
             storage::store_bounty(&env, &bounty_id, &bounty);
             storage::move_bounty_status(&env, &bounty_id, &previous_status, &bounty.status);
+            storage::decrement_creator_open_count(&env, &bounty.creator);
             events::emit_bounty_completed(&env, &bounty_id, &primary_assignee);
         }
     }
@@ -638,6 +648,7 @@ impl MergeMintContract {
         bounty.status = Symbol::new(&env, STATUS_DISPUTED);
         storage::store_bounty(&env, &bounty_id, &bounty);
         storage::move_bounty_status(&env, &bounty_id, &previous_status, &bounty.status);
+        storage::decrement_creator_open_count(&env, &bounty.creator);
         events::emit_bounty_disputed(&env, &bounty_id, &caller);
     }
 
@@ -817,6 +828,7 @@ impl MergeMintContract {
         bounty.status = Symbol::new(&env, STATUS_CANCELLED);
         storage::store_bounty(&env, &bounty_id, &bounty);
         storage::move_bounty_status(&env, &bounty_id, &previous_status, &bounty.status);
+        storage::decrement_creator_open_count(&env, &bounty.creator);
 
         events::emit_bounty_cancelled(&env, &bounty_id, &caller);
     }
@@ -873,6 +885,7 @@ impl MergeMintContract {
         bounty.status = Symbol::new(&env, STATUS_CANCELLED);
         storage::store_bounty(&env, &bounty_id, &bounty);
         storage::move_bounty_status(&env, &bounty_id, &previous_status, &bounty.status);
+        storage::decrement_creator_open_count(&env, &bounty.creator);
 
         events::emit_bounty_expired(&env, &bounty_id, &bounty.creator);
     }
@@ -926,6 +939,30 @@ impl MergeMintContract {
         storage::store_bounty(&env, &bounty_id, &bounty);
 
         events::emit_deadline_extended(&env, &bounty_id, &creator, new_deadline);
+    }
+
+    /// Set the admin-configurable cap on concurrent open+claimed bounties
+    /// per creator. A `limit` of `0` disables the cap (unlimited, the default).
+    ///
+    /// The first address to call any admin-only entrypoint becomes the
+    /// contract admin; subsequent calls are restricted to that address.
+    ///
+    /// # Authorization
+    /// Requires auth from `caller`. Restricted to the contract admin once one
+    /// has been established.
+    pub fn set_creator_open_limit(env: Env, caller: Address, limit: u32) {
+        caller.require_auth();
+
+        match storage::get_admin(&env) {
+            Some(admin) => {
+                if caller != admin {
+                    fail(ContractError::NotAdmin);
+                }
+            }
+            None => storage::set_admin(&env, &caller),
+        }
+
+        storage::set_creator_open_limit(&env, limit);
     }
 }
 

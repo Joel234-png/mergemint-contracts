@@ -638,3 +638,64 @@ fn append_contributor_history(env: &Env, address: &Address, bounty_id: &BountyId
     env.storage().persistent().set(&key, &list);
     extend(env, &key);
 }
+
+// ── Admin ─────────────────────────────────────────────────────────────────────
+
+/// Returns the contract admin, if one has been set.
+pub fn get_admin(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::Admin)
+}
+
+/// Persist the contract admin address.
+pub fn set_admin(env: &Env, admin: &Address) {
+    env.storage().instance().set(&DataKey::Admin, admin);
+}
+
+// ── Creator open-bounty cap ───────────────────────────────────────────────────
+
+/// Returns the configured cap on concurrent open+claimed bounties per
+/// creator. `0` means unlimited (the default when never configured).
+pub fn get_creator_open_limit(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::CreatorOpenLimit)
+        .unwrap_or(0)
+}
+
+/// Configure the per-creator open-bounty cap. `0` disables the cap.
+pub fn set_creator_open_limit(env: &Env, limit: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::CreatorOpenLimit, &limit);
+}
+
+/// Returns the current count of open+claimed bounties for `creator`.
+pub fn get_creator_open_count(env: &Env, creator: &Address) -> u32 {
+    let key = DataKey::CreatorOpenCount(creator.clone());
+    let count: Option<u32> = env.storage().persistent().get(&key);
+    if count.is_some() {
+        extend(env, &key);
+    }
+    count.unwrap_or(0)
+}
+
+fn set_creator_open_count(env: &Env, creator: &Address, count: u32) {
+    let key = DataKey::CreatorOpenCount(creator.clone());
+    env.storage().persistent().set(&key, &count);
+    extend(env, &key);
+}
+
+/// Increment `creator`'s open+claimed bounty counter by one.
+pub fn increment_creator_open_count(env: &Env, creator: &Address) {
+    let current = get_creator_open_count(env, creator);
+    set_creator_open_count(env, creator, current + 1);
+}
+
+/// Decrement `creator`'s open+claimed bounty counter by one, saturating at
+/// zero so the counter can never go negative.
+pub fn decrement_creator_open_count(env: &Env, creator: &Address) {
+    let current = get_creator_open_count(env, creator);
+    if current > 0 {
+        set_creator_open_count(env, creator, current - 1);
+    }
+}
