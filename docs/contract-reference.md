@@ -90,6 +90,7 @@ Allowed symbol values (`src/symbols.rs`):
 | [`get_contributor_active_bounty`](#get_contributor_active_bounty) | query | none | — | — |
 | [`get_contributor_bounty_history`](#get_contributor_bounty_history) | query | none | — | — |
 | [`get_bounties_by_creator`](#get_bounties_by_creator) | query | none | — | — |
+| [`get_bounties_by_token`](#get_bounties_by_token) | query | none | — | — |
 
 ---
 
@@ -478,6 +479,7 @@ exhausted.
 | <a id="get_contributor_active_bounty"></a>`get_contributor_active_bounty` | `(address: Address) -> Option<BountyId>` | The first `in_progress` bounty that lists `address` as an assignee. | none |
 | <a id="get_contributor_bounty_history"></a>`get_contributor_bounty_history` | `(address: Address, offset: u32, limit: u32) -> Vec<BountyId>` | Bounded page of bounties where `address` was an assignee when they reached `completed`/`cancelled`, newest first. Limit capped at 50. | none |
 | <a id="get_bounties_by_creator"></a>`get_bounties_by_creator` | `(creator: Address, cursor: Option<u32>, limit: u32) -> (Vec<BountyId>, Option<u32>)` | One page of the bounties created by `creator`, in creation order. | none |
+| <a id="get_bounties_by_token"></a>`get_bounties_by_token` | `(token: Address, cursor: Option<u32>, limit: u32) -> (Vec<BountyId>, Option<u32>)` | One page of the bounties paid in `token` (`reward_token`), in creation order. Same cursor/limit pagination as `get_bounties_by_creator`; `limit` capped at `MAX_LIMIT` (50). Pruned on `archive_bounty`. | none |
 
 ---
 

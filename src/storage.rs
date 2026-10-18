@@ -673,6 +673,41 @@ pub fn append_creator_bounty(env: &Env, creator: &Address, bounty_id: &BountyId)
         .set(&DataKey::ContributorBounties(creator.clone()), &list);
 }
 
+// ── Token bounties index ─────────────────────────────────────────────────────
+
+/// Returns every bounty ID paid in `token`, in creation order. Empty if
+/// `token` has never been used as a `reward_token`.
+pub fn get_token_bounties(env: &Env, token: &Address) -> Vec<BountyId> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::TokenBounties(token.clone()))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+/// Append `bounty_id` to `token`'s index. Called once from `create_bounty`.
+pub fn append_token_bounty(env: &Env, token: &Address, bounty_id: &BountyId) {
+    let mut list = get_token_bounties(env, token);
+    list.push_back(bounty_id.clone());
+    env.storage()
+        .persistent()
+        .set(&DataKey::TokenBounties(token.clone()), &list);
+}
+
+/// Remove `bounty_id` from `token`'s index. Called from `archive_bounty` so
+/// the index never points at a pruned full record.
+pub fn remove_token_bounty(env: &Env, token: &Address, bounty_id: &BountyId) {
+    let list = get_token_bounties(env, token);
+    let mut trimmed: Vec<BountyId> = Vec::new(env);
+    for id in list.iter() {
+        if id != *bounty_id {
+            trimmed.push_back(id);
+        }
+    }
+    env.storage()
+        .persistent()
+        .set(&DataKey::TokenBounties(token.clone()), &trimmed);
+}
+
 // ── Contributor bounty history ───────────────────────────────────────────────
 
 /// Returns every bounty ID `address` was an assignee on when it reached a

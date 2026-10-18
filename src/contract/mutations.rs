@@ -305,6 +305,7 @@ impl MergeMintContract {
         storage::add_bounty_to_status(&env, &id, &bounty.status);
         storage::append_creator_bounty(&env, &creator, &id);
         storage::add_open_bounty(&env, &id);
+        storage::append_token_bounty(&env, &bounty.reward_token, &id);
 
         events::emit_bounty_created(&env, &id, &creator, &reward_amount);
         id
@@ -1072,6 +1073,7 @@ impl MergeMintContract {
         storage::store_bounty_archive(&env, &bounty_id, &summary);
         storage::remove_bounty_body(&env, &bounty_id);
         storage::remove_archive_eligible_at(&env, &bounty_id);
+        storage::remove_token_bounty(&env, &bounty.reward_token, &bounty_id);
 
         events::emit_bounty_archived(&env, &bounty_id);
     }

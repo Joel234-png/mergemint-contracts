@@ -61,6 +61,11 @@ pub enum DataKey {
     /// rather than from the exact completion/cancellation ledger (which the
     /// contract does not currently record).
     ArchiveEligibleAt(BountyId),
+    /// Bounty IDs paid in a given reward token, keyed by the token contract
+    /// address. Appended to on `create_bounty`; entries for archived
+    /// bounties are pruned by `archive_bounty` so the index only lists
+    /// bounties with a live full record.
+    TokenBounties(Address),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -295,4 +295,27 @@ impl MergeMintContract {
         let all = storage::get_creator_bounties(&env, &creator);
         paginate(&env, all, cursor, limit)
     }
+
+    /// Return a bounded page of bounty IDs paid in a specific reward token.
+    ///
+    /// `cursor` is the zero-based offset; `limit` capped at `MAX_LIMIT` (50),
+    /// same cursor/limit pattern as `get_bounties_by_creator` and
+    /// `get_open_bounties`. Returns `(items, next_cursor)`; `next_cursor` is
+    /// `None` when exhausted.
+    ///
+    /// The index is maintained in `DataKey::TokenBounties(token)`: appended
+    /// to on `create_bounty`, and pruned on `archive_bounty` once a bounty's
+    /// full record is removed. Returns an empty `Vec` for a token that has
+    /// never been used as a `reward_token` (an "unknown" token is simply one
+    /// with no entries — there is nothing to validate against, since any
+    /// Soroban address is a syntactically valid token argument).
+    pub fn get_bounties_by_token(
+        env: Env,
+        token: Address,
+        cursor: Option<u32>,
+        limit: u32,
+    ) -> (Vec<BountyId>, Option<u32>) {
+        let all = storage::get_token_bounties(&env, &token);
+        paginate(&env, all, cursor, limit)
+    }
 }
