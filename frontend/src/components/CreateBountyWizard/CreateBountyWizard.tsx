@@ -147,6 +147,19 @@ export function CreateBountyWizard({ onSubmit, initialData }: CreateBountyWizard
     }));
   }, []);
 
+  const handleMoveMilestone = useCallback((index: number, direction: -1 | 1) => {
+    setFormData((prev) => {
+      const target = index + direction;
+      if (target < 0 || target >= prev.milestones.length) {
+        return prev;
+      }
+      const nextMilestones = [...prev.milestones];
+      const [moved] = nextMilestones.splice(index, 1);
+      nextMilestones.splice(target, 0, moved);
+      return { ...prev, milestones: nextMilestones };
+    });
+  }, []);
+
   const handleMilestoneChange = useCallback(
     (index: number, field: "description" | "reward", value: string) => {
       setFormData((prev) => {
@@ -232,6 +245,16 @@ export function CreateBountyWizard({ onSubmit, initialData }: CreateBountyWizard
     { id: 4, label: "Review" },
   ];
 
+  const milestoneTotal = formData.milestones.reduce((sum, m) => {
+    const value = parseFloat(m.reward);
+    return sum + (Number.isFinite(value) ? value : 0);
+  }, 0);
+  const rewardTotal = parseFloat(formData.reward);
+  const milestoneSumMatches =
+    formData.milestones.length > 0 &&
+    Number.isFinite(rewardTotal) &&
+    Math.abs(milestoneTotal - rewardTotal) < 1e-9;
+
   return (
     <div className="create-bounty-wizard" data-testid="create-bounty-wizard">
       <nav className="wizard-stepper" aria-label="Creation Progress">
@@ -270,16 +293,9 @@ export function CreateBountyWizard({ onSubmit, initialData }: CreateBountyWizard
                   setFieldErrors((prev) => ({ ...prev, title: "" }));
                 }
               }}
-              placeholder="e.g. Build authentication"
             />
-            <div className="wizard-field-footer">
-              <span>Limit: {SYMBOL_MAX_LENGTH} chars</span>
-              <span>
-                {formData.title.length}/{SYMBOL_MAX_LENGTH}
-              </span>
-            </div>
             {fieldErrors.title && (
-              <span role="alert" className="wizard-error-text">
+              <span className="wizard-field-error" role="alert">
                 {fieldErrors.title}
               </span>
             )}
@@ -291,37 +307,23 @@ export function CreateBountyWizard({ onSubmit, initialData }: CreateBountyWizard
               id="description"
               aria-label="Description"
               className="wizard-textarea"
-              rows={4}
               value={formData.description}
-              maxLength={SYMBOL_MAX_LENGTH}
               onChange={(e) => {
                 setFormData((prev) => ({ ...prev, description: e.target.value }));
                 if (fieldErrors.description) {
                   setFieldErrors((prev) => ({ ...prev, description: "" }));
                 }
               }}
-              placeholder="Provide bounty scope"
             />
-            <div className="wizard-field-footer">
-              <span>Limit: {SYMBOL_MAX_LENGTH} chars</span>
-              <span>
-                {formData.description.length}/{SYMBOL_MAX_LENGTH}
-              </span>
-            </div>
             {fieldErrors.description && (
-              <span role="alert" className="wizard-error-text">
+              <span className="wizard-field-error" role="alert">
                 {fieldErrors.description}
               </span>
             )}
           </div>
 
           <div className="wizard-actions">
-            <div />
-            <button
-              type="button"
-              className="wizard-button wizard-button-primary"
-              onClick={handleDetailsNext}
-            >
+            <button type="button" className="wizard-button primary" onClick={handleDetailsNext}>
               Next
             </button>
           </div>
@@ -331,11 +333,12 @@ export function CreateBountyWizard({ onSubmit, initialData }: CreateBountyWizard
       {step === 2 && (
         <div className="wizard-step-body" data-testid="step-reward">
           <div className="wizard-field-group">
-            <label htmlFor="reward-amount">Reward Amount</label>
+            <label htmlFor="reward">Total Reward</label>
             <input
-              id="reward-amount"
-              aria-label="Reward Amount"
+              id="reward"
+              aria-label="Total Reward"
               className="wizard-input"
+              inputMode="decimal"
               value={formData.reward}
               onChange={(e) => {
                 setFormData((prev) => ({ ...prev, reward: e.target.value }));
@@ -343,37 +346,36 @@ export function CreateBountyWizard({ onSubmit, initialData }: CreateBountyWizard
                   setFieldErrors((prev) => ({ ...prev, reward: "" }));
                 }
               }}
-              placeholder="Reward (XLM)"
             />
             {fieldErrors.reward && (
-              <span role="alert" className="wizard-error-text">
+              <span className="wizard-field-error" role="alert">
                 {fieldErrors.reward}
               </span>
             )}
           </div>
 
           <div className="wizard-field-group">
-            <label htmlFor="max-assignees">Max Assignees</label>
+            <label htmlFor="maxAssignees">Max Assignees</label>
             <input
-              id="max-assignees"
+              id="maxAssignees"
               aria-label="Max Assignees"
+              className="wizard-input"
               type="number"
               min={1}
-              className="wizard-input"
               value={formData.maxAssignees}
               onChange={(e) => {
-                const val = parseInt(e.target.value, 10);
+                const value = parseInt(e.target.value, 10);
                 setFormData((prev) => ({
                   ...prev,
-                  maxAssignees: Number.isNaN(val) ? 1 : val,
+                  maxAssignees: Number.isFinite(value) ? value : 1,
                 }));
+                if (fieldErrors.maxAssignees) {
+                  setFieldErrors((prev) => ({ ...prev, maxAssignees: "" }));
+                }
               }}
             />
-            <div className="wizard-field-footer">
-              <span>When more than one assignee is allowed, the reward is split across claimants by share.</span>
-            </div>
             {fieldErrors.maxAssignees && (
-              <span role="alert" className="wizard-error-text">
+              <span className="wizard-field-error" role="alert">
                 {fieldErrors.maxAssignees}
               </span>
             )}
@@ -383,11 +385,7 @@ export function CreateBountyWizard({ onSubmit, initialData }: CreateBountyWizard
             <button type="button" className="wizard-button" onClick={handleBack}>
               Back
             </button>
-            <button
-              type="button"
-              className="wizard-button wizard-button-primary"
-              onClick={handleRewardNext}
-            >
+            <button type="button" className="wizard-button primary" onClick={handleRewardNext}>
               Next
             </button>
           </div>
@@ -396,110 +394,165 @@ export function CreateBountyWizard({ onSubmit, initialData }: CreateBountyWizard
 
       {step === 3 && (
         <div className="wizard-step-body" data-testid="step-milestones">
-          <div className="wizard-field-group">
-            <label>Milestones (Optional)</label>
-            <div className="wizard-field-footer">
-              <span>Split your bounty into milestones. Milestone rewards must sum to the total reward.</span>
-            </div>
+          <div className="wizard-milestones-header">
+            <h3>Milestones</h3>
+            <p className="wizard-milestones-hint">
+              Add milestones whose amounts sum to the total reward of {formData.reward || "0"}.
+            </p>
+          </div>
 
-            {formData.milestones.map((milestone, idx) => (
-              <div key={idx} className="wizard-milestone-item">
-                <input
-                  aria-label={`Milestone ${idx + 1} Description`}
-                  placeholder="Milestone description"
-                  className="wizard-input"
-                  value={milestone.description}
-                  onChange={(e) => handleMilestoneChange(idx, "description", e.target.value)}
-                />
-                <input
-                  aria-label={`Milestone ${idx + 1} Reward`}
-                  placeholder="Reward"
-                  style={{ width: "120px" }}
-                  className="wizard-input"
-                  value={milestone.reward}
-                  onChange={(e) => handleMilestoneChange(idx, "reward", e.target.value)}
-                />
-                <button
-                  type="button"
-                  className="wizard-button"
-                  onClick={() => handleRemoveMilestone(idx)}
-                >
-                  Remove
-                </button>
-              </div>
+          {formData.milestones.length === 0 && (
+            <p className="wizard-milestones-empty">No milestones yet. Add one to split the reward.</p>
+          )}
+
+          <ul className="wizard-milestones-list">
+            {formData.milestones.map((milestone, index) => (
+              <li key={index} className="wizard-milestone-item" data-testid={`milestone-${index}`}>
+                <div className="wizard-milestone-order">{index + 1}</div>
+                <div className="wizard-milestone-fields">
+                  <div className="wizard-field-group">
+                    <label htmlFor={`milestone-description-${index}`}>Description</label>
+                    <input
+                      id={`milestone-description-${index}`}
+                      aria-label={`Milestone ${index + 1} description`}
+                      className="wizard-input"
+                      value={milestone.description}
+                      onChange={(e) =>
+                        handleMilestoneChange(index, "description", e.target.value)
+                      }
+                    />
+                  </div>
+                  <div className="wizard-field-group">
+                    <label htmlFor={`milestone-reward-${index}`}>Amount</label>
+                    <input
+                      id={`milestone-reward-${index}`}
+                      aria-label={`Milestone ${index + 1} amount`}
+                      className="wizard-input"
+                      inputMode="decimal"
+                      value={milestone.reward}
+                      onChange={(e) => handleMilestoneChange(index, "reward", e.target.value)}
+                    />
+                  </div>
+                </div>
+                <div className="wizard-milestone-controls">
+                  <button
+                    type="button"
+                    className="wizard-icon-button"
+                    aria-label={`Move milestone ${index + 1} up`}
+                    disabled={index === 0}
+                    onClick={() => handleMoveMilestone(index, -1)}
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    className="wizard-icon-button"
+                    aria-label={`Move milestone ${index + 1} down`}
+                    disabled={index === formData.milestones.length - 1}
+                    onClick={() => handleMoveMilestone(index, 1)}
+                  >
+                    ↓
+                  </button>
+                  <button
+                    type="button"
+                    className="wizard-icon-button danger"
+                    aria-label={`Remove milestone ${index + 1}`}
+                    onClick={() => handleRemoveMilestone(index)}
+                  >
+                    ✕
+                  </button>
+                </div>
+              </li>
             ))}
+          </ul>
 
-            <button
-              type="button"
-              className="wizard-button"
-              style={{ width: "fit-content", marginTop: "8px" }}
-              onClick={handleAddMilestone}
-            >
-              Add Milestone
-            </button>
-
-            {fieldErrors.milestones && (
-              <span role="alert" className="wizard-error-text">
-                {fieldErrors.milestones}
+          <div className="wizard-milestones-summary">
+            <span>
+              Sum: {milestoneTotal} / {formData.reward || "0"}
+            </span>
+            {formData.milestones.length > 0 && !milestoneSumMatches && (
+              <span className="wizard-field-error" role="alert">
+                Milestone amounts must sum to the total reward.
               </span>
             )}
           </div>
 
-          <div className="wizard-field-group" style={{ marginTop: "16px" }}>
-            <label>Required Verifiers (Optional)</label>
-            {formData.verifiers.map((verifier, idx) => (
-              <div key={idx} className="wizard-verifier-item">
+          {fieldErrors.milestones && (
+            <span className="wizard-field-error" role="alert">
+              {fieldErrors.milestones}
+            </span>
+          )}
+
+          <div className="wizard-actions">
+            <button type="button" className="wizard-button" onClick={handleAddMilestone}>
+              Add Milestone
+            </button>
+            <button type="button" className="wizard-button" onClick={handleBack}>
+              Back
+            </button>
+            <button type="button" className="wizard-button primary" onClick={handleMilestonesNext}>
+              Next
+            </button>
+          </div>
+        </div>
+      )}
+
+      {step === 4 && (
+        <form className="wizard-step-body" data-testid="step-review" onSubmit={handleSubmit}>
+          <div className="wizard-field-group">
+            <label htmlFor="verifier">Verifiers</label>
+            {formData.verifiers.map((verifier, index) => (
+              <div key={index} className="wizard-verifier-row">
                 <input
-                  aria-label={`Verifier ${idx + 1} Address`}
-                  placeholder="Verifier public key or address"
+                  id={`verifier-${index}`}
+                  aria-label={`Verifier ${index + 1}`}
                   className="wizard-input"
                   value={verifier}
-                  onChange={(e) => handleVerifierChange(idx, e.target.value)}
+                  onChange={(e) => handleVerifierChange(index, e.target.value)}
                 />
                 <button
                   type="button"
-                  className="wizard-button"
-                  onClick={() => handleRemoveVerifier(idx)}
+                  className="wizard-icon-button danger"
+                  aria-label={`Remove verifier ${index + 1}`}
+                  onClick={() => handleRemoveVerifier(index)}
                 >
-                  Remove
+                  ✕
                 </button>
               </div>
             ))}
-
-            <button
-              type="button"
-              className="wizard-button"
-              style={{ width: "fit-content", marginTop: "8px" }}
-              onClick={handleAddVerifier}
-            >
+            <button type="button" className="wizard-button" onClick={handleAddVerifier}>
               Add Verifier
             </button>
-
-            {formData.verifiers.length > 0 && (
-              <div style={{ marginTop: "12px" }}>
-                <label htmlFor="approval-threshold">Approval Threshold</label>
-                <input
-                  id="approval-threshold"
-                  aria-label="Approval Threshold"
-                  type="number"
-                  min={1}
-                  max={formData.verifiers.length}
-                  className="wizard-input"
-                  value={formData.threshold}
-                  onChange={(e) => {
-                    const val = parseInt(e.target.value, 10);
-                    setFormData((prev) => ({
-                      ...prev,
-                      threshold: Number.isNaN(val) ? 1 : val,
-                    }));
-                  }}
-                />
-              </div>
-            )}
-
             {fieldErrors.verifiers && (
-              <span role="alert" className="wizard-error-text">
+              <span className="wizard-field-error" role="alert">
                 {fieldErrors.verifiers}
+              </span>
+            )}
+          </div>
+
+          <div className="wizard-field-group">
+            <label htmlFor="threshold">Approval Threshold</label>
+            <input
+              id="threshold"
+              aria-label="Approval Threshold"
+              className="wizard-input"
+              type="number"
+              min={1}
+              value={formData.threshold}
+              onChange={(e) => {
+                const value = parseInt(e.target.value, 10);
+                setFormData((prev) => ({
+                  ...prev,
+                  threshold: Number.isFinite(value) ? value : 1,
+                }));
+                if (fieldErrors.threshold) {
+                  setFieldErrors((prev) => ({ ...prev, threshold: "" }));
+                }
+              }}
+            />
+            {fieldErrors.threshold && (
+              <span className="wizard-field-error" role="alert">
+                {fieldErrors.threshold}
               </span>
             )}
           </div>
@@ -508,69 +561,8 @@ export function CreateBountyWizard({ onSubmit, initialData }: CreateBountyWizard
             <button type="button" className="wizard-button" onClick={handleBack}>
               Back
             </button>
-            <button
-              type="button"
-              className="wizard-button wizard-button-primary"
-              onClick={handleMilestonesNext}
-            >
-              Next
-            </button>
-          </div>
-        </div>
-      )}
-
-      {step === 4 && (
-        <form onSubmit={handleSubmit} className="wizard-step-body" data-testid="step-review">
-          <div className="wizard-summary-card">
-            <div className="wizard-summary-row">
-              <span className="wizard-summary-label">Title</span>
-              <span className="wizard-summary-value">{formData.title}</span>
-            </div>
-            <div className="wizard-summary-row">
-              <span className="wizard-summary-label">Description</span>
-              <span className="wizard-summary-value">{formData.description}</span>
-            </div>
-            <div className="wizard-summary-row">
-              <span className="wizard-summary-label">Reward</span>
-              <span className="wizard-summary-value">{formData.reward} XLM</span>
-            </div>
-            <div className="wizard-summary-row">
-              <span className="wizard-summary-label">Max Assignees</span>
-              <span className="wizard-summary-value">{formData.maxAssignees}</span>
-            </div>
-            <div className="wizard-summary-row">
-              <span className="wizard-summary-label">Milestones</span>
-              <span className="wizard-summary-value">
-                {formData.milestones.length === 0
-                  ? "None"
-                  : `${formData.milestones.length} milestone(s)`}
-              </span>
-            </div>
-            {formData.verifiers.length > 0 && (
-              <div className="wizard-summary-row">
-                <span className="wizard-summary-label">Verifiers</span>
-                <span className="wizard-summary-value">
-                  {formData.verifiers.length} verifier(s), threshold: {formData.threshold}
-                </span>
-              </div>
-            )}
-          </div>
-
-          <div className="wizard-actions">
-            <button
-              type="button"
-              className="wizard-button"
-              onClick={handleBack}
-              disabled={submitting}
-            >
-              Back
-            </button>
-            <button
-              type="submit"
-              className="wizard-button wizard-button-primary"
-              disabled={submitting}
-            >
-              {submitting ? "Creating..." : "Submit"}
+            <button type="submit" className="wizard-button primary" disabled={submitting}>
+              {submitting ? "Creating..." : "Create Bounty"}
             </button>
           </div>
         </form>
