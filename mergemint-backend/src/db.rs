@@ -41,6 +41,9 @@ use std::sync::{Arc, RwLock};
 const BOUNTIES_INDEX_MIGRATION: &str = include_str!("../migrations/0001_add_bounties_indexes.sql");
 #[cfg(test)]
 const AUDIT_LOGS_MIGRATION: &str = include_str!("../migrations/0002_create_audit_logs_table.sql");
+#[cfg(test)]
+const AUDIT_LOGS_PAGINATION_MIGRATION: &str =
+    include_str!("../migrations/0003_add_audit_log_pagination_index.sql");
 
 /// Lightweight in-memory store used during development / integration tests.
 /// Production deployments replace this with a real database pool.
@@ -66,12 +69,13 @@ pub struct DbStore {
 // ---------------------------------------------------------------------------
 
 /// A registered webhook endpoint that receives signed bounty event payloads.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct WebhookSubscription {
     pub id: String,
     pub url: String,
     /// HMAC-SHA256 signing secret. Never returned to API clients.
     #[serde(skip_serializing, default)]
+    #[schema(ignore)]
     pub secret: String,
     /// Event names this subscription receives; `"*"` or an empty list means all.
     pub event_types: Vec<String>,
@@ -130,7 +134,7 @@ pub fn delete_webhook_subscription(db: &SharedDb, id: &str) -> bool {
 /// An audit log entry recording an administrative action (e.g., resolve_dispute).
 ///
 /// Fields match the database schema defined in migrations/0002_create_audit_logs_table.sql.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct AuditLog {
     pub id: Option<i64>,
     pub actor: String,
@@ -336,13 +340,17 @@ fn paginate(mut bounties: Vec<Bounty>, limit: i64) -> BountyPage {
 // Audit log queries
 // ---------------------------------------------------------------------------
 
-/// Query audit logs, optionally filtering by actor, action, or target.
-/// Results are sorted by timestamp descending (newest first).
+/// Query audit logs with inclusive timestamp filters and a stable descending
+/// `(timestamp, id)` cursor. The caller requests one extra row to determine
+/// whether another page exists.
 pub fn query_audit_logs(
     db: &SharedDb,
     actor: Option<&str>,
     action: Option<&str>,
     target: Option<&str>,
+    from: Option<u64>,
+    to: Option<u64>,
+    cursor: Option<(u64, i64)>,
     limit: i64,
 ) -> Vec<AuditLog> {
     let guard = read_db(db);
@@ -352,11 +360,19 @@ pub fn query_audit_logs(
         .filter(|log| actor.is_none_or(|a| log.actor == a))
         .filter(|log| action.is_none_or(|a| log.action == a))
         .filter(|log| target.is_none_or(|t| log.target == t))
+        .filter(|log| from.is_none_or(|timestamp| log.timestamp >= timestamp))
+        .filter(|log| to.is_none_or(|timestamp| log.timestamp <= timestamp))
+        .filter(|log| {
+            cursor.is_none_or(|(timestamp, id)| {
+                (log.timestamp, log.id.unwrap_or_default()) < (timestamp, id)
+            })
+        })
         .cloned()
         .collect();
 
-    // Sort by timestamp descending (newest first)
-    logs.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    logs.sort_by(|a, b| {
+        (b.timestamp, b.id.unwrap_or_default()).cmp(&(a.timestamp, a.id.unwrap_or_default()))
+    });
 
     let limit = usize::try_from(limit).unwrap_or(usize::MAX);
     logs.truncate(limit);
@@ -366,6 +382,18 @@ pub fn query_audit_logs(
 /// Add an audit log entry to the store.
 pub fn write_audit_log(db: &SharedDb, log: AuditLog) {
     let mut guard = acquire_db(db);
+    let mut log = log;
+    if log.id.is_none() {
+        log.id = Some(
+            guard
+                .audit_logs
+                .iter()
+                .filter_map(|entry| entry.id)
+                .max()
+                .unwrap_or_default()
+                + 1,
+        );
+    }
     guard.audit_logs.push(log);
 }
 
@@ -497,6 +525,49 @@ mod tests {
                 "audit_logs migration must index {column}"
             );
         }
+        assert!(AUDIT_LOGS_PAGINATION_MIGRATION
+            .contains("ON audit_logs (action, timestamp DESC, id DESC)"));
+    }
+
+    #[test]
+    fn audit_log_pages_filter_time_and_continue_after_cursor() {
+        let db = new_shared_db();
+        for (timestamp, action) in [
+            (10, "create"),
+            (20, "delete"),
+            (20, "create"),
+            (30, "create"),
+        ] {
+            write_audit_log(
+                &db,
+                AuditLog::new(
+                    "admin".to_string(),
+                    action.to_string(),
+                    "item".to_string(),
+                    timestamp,
+                ),
+            );
+        }
+
+        let first_page =
+            query_audit_logs(&db, None, Some("create"), None, Some(10), Some(30), None, 1);
+        assert_eq!(first_page.len(), 1);
+        assert_eq!(first_page[0].timestamp, 30);
+        let cursor = (first_page[0].timestamp, first_page[0].id.unwrap());
+
+        let second_page = query_audit_logs(
+            &db,
+            None,
+            Some("create"),
+            None,
+            Some(10),
+            Some(30),
+            Some(cursor),
+            10,
+        );
+        assert_eq!(second_page.len(), 2);
+        assert_eq!(second_page[0].timestamp, 20);
+        assert_eq!(second_page[1].timestamp, 10);
     }
 
     #[test]
@@ -684,7 +755,7 @@ mod tests {
 
 /// A contributor entry in the leaderboard, ranked by reputation and completed
 /// bounties. Aggregates stats across the bounties table.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct LeaderboardEntry {
     pub address: String,
     pub completed_bounties: i64,
@@ -693,7 +764,7 @@ pub struct LeaderboardEntry {
 
 /// A page of leaderboard entries, ranked by reputation (descending) and
 /// completed bounties (descending).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct LeaderboardPage {
     pub entries: Vec<LeaderboardEntry>,
 }

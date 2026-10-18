@@ -1,0 +1,123 @@
+{
+    "paths": {
+        "/admin/audit-logs": [
+            "get"
+        ],
+        "/bounties": [
+            "get"
+        ],
+        "/bounties/assignee/{address}": [
+            "get"
+        ],
+        "/bounties/stream": [
+            "get"
+        ],
+        "/bounties/{id}": [
+            "get"
+        ],
+        "/bounties/{id}/claim": [
+            "post"
+        ],
+        "/leaderboard": [
+            "get"
+        ],
+        "/webhooks/subscriptions": [
+            "get"
+        ],
+        "/webhooks/subscriptions/{id}": [
+            "get"
+        ]
+    },
+    "schemas": {
+        "AppError": {
+            "fields": [
+                "code",
+                "message"
+            ],
+            "enum": null
+        },
+        "AuditLog": {
+            "fields": [
+                "action",
+                "actor",
+                "id",
+                "target",
+                "timestamp"
+            ],
+            "enum": null
+        },
+        "Bounty": {
+            "fields": [
+                "assignee",
+                "created_at",
+                "creator",
+                "deadline",
+                "id",
+                "reward",
+                "status",
+                "tags"
+            ],
+            "enum": null
+        },
+        "BountyPage": {
+            "fields": [
+                "bounties",
+                "next_cursor"
+            ],
+            "enum": null
+        },
+        "BountySortField": {
+            "fields": [],
+            "enum": [
+                "created",
+                "reward",
+                "deadline"
+            ]
+        },
+        "ClaimResponse": {
+            "fields": [
+                "id",
+                "status"
+            ],
+            "enum": null
+        },
+        "LeaderboardEntry": {
+            "fields": [
+                "address",
+                "completed_bounties",
+                "reputation"
+            ],
+            "enum": null
+        },
+        "LeaderboardPage": {
+            "fields": [
+                "entries"
+            ],
+            "enum": null
+        },
+        "QueryAuditLogsResponse": {
+            "fields": [
+                "logs",
+                "next_cursor"
+            ],
+            "enum": null
+        },
+        "SortOrder": {
+            "fields": [],
+            "enum": [
+                "asc",
+                "desc"
+            ]
+        },
+        "WebhookSubscription": {
+            "fields": [
+                "active",
+                "created_at",
+                "event_types",
+                "id",
+                "url"
+            ],
+            "enum": null
+        }
+    }
+}

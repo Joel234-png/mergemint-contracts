@@ -29,6 +29,83 @@
 // included in production binaries.
 
 use crate::db::{new_shared_db, SharedDb};
+use serde_json::Value;
+use utoipa::openapi::OpenApi;
+
+/// Validate a JSON response body against the matching OpenAPI response schema.
+pub fn validate_openapi_response(
+    openapi: &OpenApi,
+    path: &str,
+    status: u16,
+    body: &Value,
+) -> Result<(), String> {
+    let document = serde_json::to_value(openapi).map_err(|error| error.to_string())?;
+    let status = status.to_string();
+    let path_pointer = path.replace('~', "~0").replace('/', "~1");
+    let schema = document
+        .pointer(&format!(
+            "/paths/{path_pointer}/get/responses/{status}/content/application~1json/schema"
+        ))
+        .cloned()
+        .ok_or_else(|| format!("no JSON schema documented for GET {path} status {status}"))?;
+    let mut root = serde_json::json!({
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "components": document["components"],
+        "responseSchema": schema,
+        "$ref": "#/responseSchema"
+    });
+    normalize_nullable_schemas(&mut root);
+    let validator = jsonschema::JSONSchema::compile(&root)
+        .map_err(|error| format!("invalid OpenAPI response schema for GET {path}: {error}"))?;
+    match validator.validate(body) {
+        Ok(()) => Ok(()),
+        Err(errors) => Err(errors
+            .map(|error| format!("{}: {error}", error.instance_path))
+            .collect::<Vec<_>>()
+            .join("; ")),
+    }
+}
+
+fn normalize_nullable_schemas(schema: &mut Value) {
+    match schema {
+        Value::Array(items) => {
+            for item in items {
+                normalize_nullable_schemas(item);
+            }
+        }
+        Value::Object(object) => {
+            for value in object.values_mut() {
+                normalize_nullable_schemas(value);
+            }
+            if object.remove("nullable") == Some(Value::Bool(true)) {
+                let replacement = match object.remove("type") {
+                    Some(Value::String(kind)) => {
+                        object.insert("type".to_string(), serde_json::json!([kind, "null"]));
+                        None
+                    }
+                    Some(Value::Array(mut kinds)) => {
+                        if !kinds.iter().any(|kind| kind == "null") {
+                            kinds.push(Value::String("null".to_string()));
+                        }
+                        object.insert("type".to_string(), Value::Array(kinds));
+                        None
+                    }
+                    Some(kind) => {
+                        object.insert("type".to_string(), kind);
+                        Some(Value::Object(object.clone()))
+                    }
+                    None => Some(Value::Object(object.clone())),
+                };
+                if let Some(non_null) = replacement {
+                    *schema = serde_json::json!({
+                        "anyOf": [non_null, {"type": "null"}]
+                    });
+                }
+            }
+        }
+        _ => {}
+    }
+}
 
 /// Return a fresh, empty [`SharedDb`] suitable for use in a single test.
 ///

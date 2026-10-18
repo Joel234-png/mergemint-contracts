@@ -38,6 +38,7 @@ CORS_ALLOWED_ORIGINS=http://localhost:5173 cargo run
 |---|---|
 | `CORS_ALLOWED_ORIGINS` | Comma-separated list of browser origins allowed to call the API. When empty or unset, no cross-origin browser requests are allowed. |
 | `ALLOWLISTED_REWARD_TOKENS` | Comma-separated reward-token allow-list for create-bounty flows. A warning is logged at startup when it is empty. |
+| `REQUEST_TIMEOUT_SECS` | Positive whole seconds for the global non-streaming request timeout. Default: `30`; invalid values use the default. |
 | `RUST_LOG` | Log filter. Default: `mergemint_backend=info,tower_http=debug,axum::rejection=trace`. |
 
 The server always binds `0.0.0.0:8080`. The examples below use:
@@ -61,8 +62,6 @@ export ADDR=GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA   # 56-char
   `Content-Type: application/json`. Otherwise the request is rejected with
   `415`.
 - Handler errors use the `AppError` shape `{"code": <u16>, "message": "<string>"}`.
-  The one exception is `GET /bounties/assignee/:address`, which returns
-  `{"error": "<string>"}` for a bad address.
 - Extractor errors (a malformed query string, missing JSON fields, a wrong
   content type) come from Axum. They return a **`text/plain`** body, not JSON.
 - 5xx responses always carry `"message": "internal server error"`. Details are
@@ -74,14 +73,24 @@ export ADDR=GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA   # 56-char
 
 ## Global limits and headers
 
-These are applied to **every** route by the middleware stack in `src/main.rs`.
+These are applied by the middleware stack in `src/main.rs`; the SSE route is
+excluded from the request timeout so streams can remain open.
 
 | Concern | Value | Behaviour |
 |---|---|---|
 | Max request body | 1 MiB (`MAX_BODY_BYTES`) | `413 Payload Too Large` |
-| Request timeout | 30 s (`REQUEST_TIMEOUT`) | `408 Request Timeout` (the request is cancelled) |
+| Request timeout | 30 s by default (`REQUEST_TIMEOUT_SECS`) | `504 Gateway Timeout` with the standard `{ "code": 504, "message": "request timed out" }` body. `/bounties/stream` is excluded. |
 | Correlation ID | `x-request-id` | Echoed back when you send one, otherwise a UUID v4 is generated. It is included in every server log line for the request. |
 | CORS | `CORS_ALLOWED_ORIGINS` | Methods `GET, POST`. Allowed request headers: **`content-type` only**. |
+
+### `GET /admin/audit-logs`
+
+Returns audit records newest first. `action` filters by action type; `from` and
+`to` are inclusive Unix timestamps in seconds. `limit` defaults to 50 and is
+capped at 100. Pass `next_cursor` back as `cursor` to retrieve the next page.
+The response is `{ "logs": [...], "next_cursor": "..." }`; `next_cursor` is
+`null` when the results are exhausted. A cursor combined with a time range is
+applied after the range filter.
 
 ```bash
 # Propagate your own trace ID

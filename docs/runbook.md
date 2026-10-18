@@ -1,5 +1,13 @@
 # Incident Runbook
 
+## Admin audit-log queries
+
+`GET /admin/audit-logs` returns at most 100 records per page. Use `action`,
+`from`, and `to` to narrow the query; time bounds are inclusive Unix seconds.
+Pass the response's `next_cursor` as the next request's `cursor` to continue
+through records in newest-first order. Cursors are opaque and should not be
+constructed or edited by clients.
+
 What to do when a critical bug or key compromise is found in a deployed MergeMint contract: who does what, in what order, and which commands to run.
 
 > **Implementation status.** The circuit-breaker entrypoints this runbook relies on are **not yet in `src/`**. `init`, `pause` and `unpause` are specified in [pause-upgrade-strategy.md](pause-upgrade-strategy.md) (follow-up ticket #1). `is_paused` and the two-step admin transfer (`transfer_admin`, `accept_admin`, `get_admin`) are the companions this runbook proposes to meet that doc's requirement that *changing the admin must require the current admin's signature*. Until they ship:

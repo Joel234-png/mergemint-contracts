@@ -8,10 +8,12 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
+use utoipa::{IntoParams, ToSchema};
 
 use crate::db::{
     acquire_idempotency, read_db, read_idempotency, write_audit_log, AuditLog, IdempotencyEntry,
@@ -239,6 +241,14 @@ fn redact_if_sensitive(msg: String, fallback: &str) -> String {
 }
 
 impl AppError {
+    pub fn gateway_timeout() -> (StatusCode, Json<AppError>) {
+        let err = AppError {
+            code: StatusCode::GATEWAY_TIMEOUT.as_u16(),
+            message: "request timed out".to_string(),
+        };
+        (StatusCode::GATEWAY_TIMEOUT, Json(err))
+    }
+
     pub fn bad_request(msg: impl Into<String>) -> (StatusCode, Json<AppError>) {
         let err = AppError {
             code: 400,
@@ -548,17 +558,37 @@ async fn self_claim_inner(
 // query_audit_logs handler
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct QueryAuditLogsRequest {
     pub actor: Option<String>,
     pub action: Option<String>,
     pub target: Option<String>,
+    pub from: Option<u64>,
+    pub to: Option<u64>,
+    pub cursor: Option<String>,
     pub limit: Option<i64>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct QueryAuditLogsResponse {
     pub logs: Vec<AuditLog>,
+    pub next_cursor: Option<String>,
+}
+
+const MAX_AUDIT_LOG_PAGE_SIZE: i64 = 100;
+
+fn encode_audit_log_cursor(timestamp: u64, id: i64) -> String {
+    URL_SAFE_NO_PAD.encode(format!("{timestamp}|{id}").as_bytes())
+}
+
+fn decode_audit_log_cursor(cursor: &str) -> Option<(u64, i64)> {
+    let decoded = URL_SAFE_NO_PAD.decode(cursor).ok()?;
+    let decoded = String::from_utf8(decoded).ok()?;
+    let (timestamp, id) = decoded.split_once('|')?;
+    let timestamp = timestamp.parse().ok()?;
+    let id = id.parse::<i64>().ok().filter(|id| *id > 0)?;
+    Some((timestamp, id))
 }
 
 /// Query audit logs with optional filtering by actor, action, or target.
@@ -568,22 +598,63 @@ pub struct QueryAuditLogsResponse {
 /// - `actor`: filter by the actor who performed the action (e.g., arbitrator address)
 /// - `action`: filter by action type (e.g., "resolve_dispute")
 /// - `target`: filter by target (e.g., bounty_id)
-/// - `limit`: maximum number of results to return (default: 100, max: 1000)
+/// - `from` / `to`: inclusive Unix timestamps in seconds
+/// - `cursor`: opaque cursor returned by the previous page
+/// - `limit`: maximum number of results to return (default: 50, max: 100)
+#[utoipa::path(
+    get,
+    path = "/admin/audit-logs",
+    params(QueryAuditLogsRequest),
+    responses(
+        (status = 200, description = "Paginated audit logs", body = QueryAuditLogsResponse),
+        (status = 400, description = "Invalid cursor or time range", body = AppError),
+    ),
+    tag = "admin"
+)]
 pub async fn query_audit_logs(
     State(state): State<Arc<AppState>>,
     axum::extract::Query(params): axum::extract::Query<QueryAuditLogsRequest>,
-) -> Json<QueryAuditLogsResponse> {
-    let limit = params.limit.unwrap_or(100).clamp(1, 1000);
+) -> Result<Json<QueryAuditLogsResponse>, (StatusCode, Json<AppError>)> {
+    if params
+        .from
+        .zip(params.to)
+        .is_some_and(|(from, to)| from > to)
+    {
+        return Err(AppError::bad_request(
+            "from must be less than or equal to to",
+        ));
+    }
 
-    let logs = crate::db::query_audit_logs(
+    let cursor = match params.cursor.as_deref() {
+        Some(raw) => Some(
+            decode_audit_log_cursor(raw).ok_or_else(|| AppError::bad_request("invalid cursor"))?,
+        ),
+        None => None,
+    };
+    let limit = params.limit.unwrap_or(50).clamp(1, MAX_AUDIT_LOG_PAGE_SIZE);
+
+    let mut logs = crate::db::query_audit_logs(
         &state.db,
         params.actor.as_deref(),
         params.action.as_deref(),
         params.target.as_deref(),
-        limit,
+        params.from,
+        params.to,
+        cursor,
+        limit + 1,
     );
+    let has_more = logs.len() as i64 > limit;
+    if has_more {
+        logs.truncate(limit as usize);
+    }
+    let next_cursor = if has_more {
+        logs.last()
+            .and_then(|log| log.id.map(|id| encode_audit_log_cursor(log.timestamp, id)))
+    } else {
+        None
+    };
 
-    Json(QueryAuditLogsResponse { logs })
+    Ok(Json(QueryAuditLogsResponse { logs, next_cursor }))
 }
 
 // ---------------------------------------------------------------------------

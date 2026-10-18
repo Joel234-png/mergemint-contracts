@@ -7,7 +7,7 @@ edition = "2021"
 axum = "0.7"
 tokio = { version = "1", features = ["full"] }
 tower = "0.4"
-tower-http = { version = "0.5", features = ["trace", "cors", "limit", "request-id", "timeout"] }
+tower-http = { version = "0.5", features = ["trace", "cors", "limit", "request-id"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 serde = { version = "1", features = ["derive"] }
@@ -30,3 +30,4 @@ utoipa = { version = "5", features = ["axum_extras", "chrono"] }
 [dev-dependencies]
 tower = { version = "0.4", features = ["util"] }
 tempfile = "3.10"
+jsonschema = { version = "0.18", default-features = false }
