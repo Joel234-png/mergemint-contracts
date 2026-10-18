@@ -42,6 +42,12 @@ pub enum ContractError {
     MilestoneRewardsMismatch,
     RewardAmountOverflow,
     MetadataEmpty,
+    /// Internal storage invariant violated (e.g. a status index page that
+    /// should contain the bounty being removed turned out to be empty).
+    /// Surfacing this as a typed error rather than panicking on an unwrap
+    /// keeps the failure mode a catchable contract error instead of an
+    /// opaque host trap.
+    CorruptedIndex,
 }
 
 /// Convert a `ContractError` to its canonical panic message and panic.
@@ -91,5 +97,6 @@ pub const fn message(e: ContractError) -> &'static str {
         ContractError::MilestoneRewardsMismatch => "milestone rewards do not sum to reward_amount",
         ContractError::RewardAmountOverflow => "reward amount arithmetic overflow",
         ContractError::MetadataEmpty => "metadata must not be empty",
+        ContractError::CorruptedIndex => "internal storage index invariant violated",
     }
 }

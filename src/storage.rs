@@ -41,6 +41,7 @@
 //! append and swap-remove semantics.
 use soroban_sdk::{Address, Env, Symbol, Vec};
 
+use crate::errors::{fail, ContractError};
 use crate::types::{Bounty, BountyId, BountyMeta, Contributor, DataKey};
 
 /// Terminal statuses after which a bounty is recorded in a contributor's
@@ -352,7 +353,13 @@ pub fn remove_bounty_from_status(env: &Env, bounty_id: &BountyId, status: &Symbo
     // shrink the last page by one.  This is O(1) writes (at most 2 pages).
     let last_page_idx = page_count - 1;
     let last_page = get_status_page(env, status, last_page_idx);
-    let last_item = last_page.get(last_page.len() - 1).unwrap();
+    if last_page.is_empty() {
+        fail(ContractError::CorruptedIndex);
+    }
+    let last_item = match last_page.get(last_page.len() - 1) {
+        Some(item) => item,
+        None => fail(ContractError::CorruptedIndex),
+    };
 
     if fp == last_page_idx && fpos == last_page.len() - 1 {
         // Removing the very last item — just pop it.
@@ -526,7 +533,13 @@ pub fn remove_open_bounty(env: &Env, bounty_id: &BountyId) {
 
     let last_page_idx = page_count - 1;
     let last_page = get_open_bounties_page(env, last_page_idx);
-    let last_item = last_page.get(last_page.len() - 1).unwrap();
+    if last_page.is_empty() {
+        fail(ContractError::CorruptedIndex);
+    }
+    let last_item = match last_page.get(last_page.len() - 1) {
+        Some(item) => item,
+        None => fail(ContractError::CorruptedIndex),
+    };
 
     if fp == last_page_idx && fpos == last_page.len() - 1 {
         let mut trimmed: Vec<BountyId> = Vec::new(env);
