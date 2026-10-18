@@ -69,6 +69,20 @@ pub fn emit_bounty_reassigned(
     );
 }
 
+pub fn emit_bounty_sponsored(
+    env: &Env,
+    bounty_id: &BountyId,
+    sponsor: &Address,
+    amount: &i128,
+    new_reward_amount: &i128,
+) {
+    let topic = Symbol::new(env, "bounty_sponsored");
+    env.events().publish(
+        (topic, sponsor.clone()),
+        (bounty_id.clone(), *amount, *new_reward_amount),
+    );
+}
+
 pub fn emit_deadline_extended(
     env: &Env,
     bounty_id: &BountyId,

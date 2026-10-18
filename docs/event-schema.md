@@ -58,6 +58,12 @@ Contract events emitted for indexer integration.
 - **Trigger**: Creator reassigns a claimed bounty via `reassign_bounty`
 - **Purpose**: Notify indexer that the assignee on an in-progress bounty changed
 
+### bounty_sponsored
+- **Topics**: `(Symbol("bounty_sponsored"), sponsor_address)`
+- **Data**: `(bounty_id, amount, new_reward_amount)`
+- **Trigger**: A third party co-funds a bounty via `sponsor_bounty`
+- **Purpose**: Notify indexer of additional escrowed funds and the sponsor's contribution
+
 ### approval_recorded
 - **Topics**: `(Symbol("approval_recorded"), verifier_address)`
 - **Data**: `(bounty_id, approval_count)`

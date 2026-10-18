@@ -76,6 +76,39 @@ fn distribute_payout(
     primary_assignee
 }
 
+/// Refund every sponsor's tracked contribution for `bounty_id`, clearing the
+/// sponsor list so refunds cannot be issued twice. Returns the total amount
+/// refunded (0 if there were no sponsors).
+///
+/// Used by both `cancel_bounty` (full refund alongside the creator's share)
+/// and `expire_bounty` (sponsors only; the creator's share stays escrowed so
+/// `reopen_bounty` can reuse it).
+fn refund_sponsors(env: &Env, bounty_id: &BountyId, reward_token: &Address, from: &Address) -> i128 {
+    let sponsors = storage::take_sponsors(env, bounty_id);
+    if sponsors.is_empty() {
+        return 0;
+    }
+    let token = TokenClient::new(env, reward_token);
+    let mut total: i128 = 0;
+    for (sponsor, amount) in sponsors.iter() {
+        token.transfer(from, &sponsor, &amount);
+        total += amount;
+    }
+    total
+}
+
+/// Refund the full escrowed reward for a cancelled bounty: each sponsor gets
+/// back exactly what they contributed, and the creator gets the remainder.
+fn refund_escrow(env: &Env, bounty_id: &BountyId, bounty: &Bounty) {
+    let contract_address = env.current_contract_address();
+    let sponsor_total = refund_sponsors(env, bounty_id, &bounty.reward_token, &contract_address);
+    let creator_amount = bounty.reward_amount - sponsor_total;
+    if creator_amount > 0 {
+        let token = TokenClient::new(env, &bounty.reward_token);
+        token.transfer(&contract_address, &bounty.creator, &creator_amount);
+    }
+}
+
 /// Decrement a contributor's active claims counter, if greater than zero.
 fn decrement_active_claims(contrib: &mut Contributor) {
     if contrib.active_claims > 0 {
@@ -721,13 +754,9 @@ impl MergeMintContract {
         } else {
             // validate_symbol above already guarantees resolution is "complete" or
             // "cancel" — this branch handles "cancel".
-            // Refund escrowed reward to creator before mutating status.
-            let token = TokenClient::new(&env, &bounty.reward_token);
-            token.transfer(
-                &env.current_contract_address(),
-                &bounty.creator,
-                &bounty.reward_amount,
-            );
+            // Refund escrowed reward pro rata: sponsors get their contribution
+            // back, the creator gets the remainder.
+            refund_escrow(&env, &bounty_id, &bounty);
 
             let previous_status = bounty.status.clone();
             bounty.status = Symbol::new(&env, STATUS_CANCELLED);
@@ -805,13 +834,12 @@ impl MergeMintContract {
             ContractError::BountyNotOpen,
         );
 
-        // Refund escrowed reward to creator before mutating status.
-        let token = TokenClient::new(&env, &bounty.reward_token);
-        token.transfer(
-            &env.current_contract_address(),
-            &bounty.creator,
-            &bounty.reward_amount,
-        );
+        // Refund the escrowed reward pro rata: each sponsor gets back exactly
+        // what they contributed, and the creator gets back the remainder
+        // (reward_amount minus all sponsor contributions). This preserves the
+        // escrow balance invariant even when third parties co-funded via
+        // `sponsor_bounty`.
+        refund_escrow(&env, &bounty_id, &bounty);
 
         let previous_status = bounty.status.clone();
         bounty.status = Symbol::new(&env, STATUS_CANCELLED);
@@ -861,10 +889,18 @@ impl MergeMintContract {
             fail(ContractError::BountyNotOpen);
         }
 
-        // Unlike `cancel_bounty`, expiry does not refund the creator immediately:
-        // the escrowed reward stays locked so the creator can `reopen_bounty`
-        // without having to re-fund the bounty. If the creator does not wish to
-        // reopen, this leaves funds recoverable only via a future reopen.
+        // Sponsors get their pro-rata share back immediately on expiry — their
+        // funds should not be held hostage by the creator's reopen decision.
+        // The creator's own share stays escrowed (unlike `cancel_bounty`, which
+        // refunds everyone) so the creator can `reopen_bounty` without having
+        // to re-fund it.
+        let contract_address = env.current_contract_address();
+        let sponsor_total =
+            refund_sponsors(&env, &bounty_id, &bounty.reward_token, &contract_address);
+        if sponsor_total > 0 {
+            bounty.reward_amount -= sponsor_total;
+        }
+
         let previous_status = bounty.status.clone();
         bounty.status = Symbol::new(&env, STATUS_EXPIRED);
         storage::store_bounty(&env, &bounty_id, &bounty);
@@ -924,6 +960,61 @@ impl MergeMintContract {
         storage::add_open_bounty(&env, &bounty_id);
 
         events::emit_bounty_reopened(&env, &bounty_id, &creator, new_deadline);
+    }
+
+    /// Add third-party escrowed funds to a bounty's reward pool.
+    ///
+    /// Any address (not only the creator) may sponsor a bounty that has not
+    /// yet reached a terminal state. Each sponsor's cumulative contribution is
+    /// tracked separately so it can be refunded pro rata (rather than handed
+    /// to the creator) if the bounty is later cancelled or expires.
+    ///
+    /// # Arguments
+    /// * `sponsor` - Wallet contributing funds.
+    /// * `bounty_id` - The bounty to co-fund.
+    /// * `amount` - Amount to add to the escrowed reward. Must be positive.
+    ///
+    /// # Panics
+    /// * If `bounty_id` does not exist (`ContractError::BountyNotFound`).
+    /// * If `amount` is not strictly positive (`ContractError::AmountMustBePositive`).
+    /// * If the bounty is in a terminal status (`completed`, `cancelled`, or
+    ///   `expired`) or disputed (`ContractError::BountyNotOpen`).
+    ///
+    /// # Authorization
+    /// Requires auth from `sponsor`.
+    pub fn sponsor_bounty(env: Env, sponsor: Address, bounty_id: BountyId, amount: i128) {
+        sponsor.require_auth();
+
+        let mut bounty = match storage::get_bounty(&env, &bounty_id) {
+            Some(b) => b,
+            None => fail(ContractError::BountyNotFound),
+        };
+
+        if amount <= 0 {
+            fail(ContractError::AmountMustBePositive);
+        }
+
+        // Co-funding is only meaningful while the bounty can still pay out:
+        // reject terminal statuses and disputes.
+        ensure_status(
+            &bounty,
+            &[
+                Symbol::new(&env, STATUS_OPEN),
+                Symbol::new(&env, STATUS_IN_PROGRESS),
+                Symbol::new(&env, STATUS_SUBMITTED),
+            ],
+            ContractError::BountyNotOpen,
+        );
+
+        let token = TokenClient::new(&env, &bounty.reward_token);
+        token.transfer(&sponsor, &env.current_contract_address(), &amount);
+
+        storage::add_sponsor_contribution(&env, &bounty_id, &sponsor, amount);
+
+        bounty.reward_amount += amount;
+        storage::store_bounty(&env, &bounty_id, &bounty);
+
+        events::emit_bounty_sponsored(&env, &bounty_id, &sponsor, &amount, &bounty.reward_amount);
     }
 
     /// Reassign a `"in_progress"` (claimed) bounty's single assignee to a new
