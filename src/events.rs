@@ -118,6 +118,11 @@ pub fn emit_contributor_metadata_updated(env: &Env, contributor: &Address, metad
 ///
 /// `reason` is one of the documented symbols in `docs/event-schema.md`
 /// (e.g. `"completion"`, `"penalty"`, `"decay"`).
+pub fn emit_bounty_archived(env: &Env, bounty_id: &BountyId) {
+    let topic = Symbol::new(env, "bounty_archived");
+    env.events().publish((topic,), bounty_id.clone());
+}
+
 pub fn emit_reputation_changed(
     env: &Env,
     contributor: &Address,

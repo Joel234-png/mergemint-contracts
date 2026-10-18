@@ -41,7 +41,7 @@
 //! append and swap-remove semantics.
 use soroban_sdk::{Address, Env, Symbol, Vec};
 
-use crate::types::{Bounty, BountyId, BountyMeta, Contributor, DataKey};
+use crate::types::{Bounty, BountyId, BountyMeta, BountySummary, Contributor, DataKey};
 
 /// Terminal statuses after which a bounty is recorded in a contributor's
 /// history index. Kept in sync with the status literals in `contract/mutations.rs`.
@@ -144,6 +144,61 @@ pub fn get_bounty(env: &Env, id: &BountyId) -> Option<Bounty> {
         extend(env, &key);
     }
     bounty
+}
+
+/// Remove a bounty's full body and metadata from storage.
+///
+/// Called by `archive_bounty` once a `BountySummary` has been written, so
+/// the full `Bounty`/`BountyMeta` entries stop accruing TTL-extension rent.
+pub fn remove_bounty_body(env: &Env, id: &BountyId) {
+    env.storage().persistent().remove(&DataKey::Bounty(id.clone()));
+    env.storage()
+        .persistent()
+        .remove(&DataKey::BountyMeta(id.clone()));
+}
+
+/// Persist a compacted `BountySummary` for a finished bounty.
+///
+/// Storage key: `DataKey::BountyArchive(id)`.
+pub fn store_bounty_archive(env: &Env, id: &BountyId, summary: &BountySummary) {
+    let key = DataKey::BountyArchive(id.clone());
+    env.storage().persistent().set(&key, summary);
+    extend(env, &key);
+}
+
+/// Retrieve a bounty's archived summary, if it has been archived.
+pub fn get_bounty_archive(env: &Env, id: &BountyId) -> Option<BountySummary> {
+    let key = DataKey::BountyArchive(id.clone());
+    let summary: Option<BountySummary> = env.storage().persistent().get(&key);
+    if summary.is_some() {
+        extend(env, &key);
+    }
+    summary
+}
+
+/// Read the ledger sequence after which `id` becomes archivable, if a
+/// grace-period marker has been set by a prior `archive_bounty` attempt.
+pub fn get_archive_eligible_at(env: &Env, id: &BountyId) -> Option<u32> {
+    let key = DataKey::ArchiveEligibleAt(id.clone());
+    let value: Option<u32> = env.storage().persistent().get(&key);
+    if value.is_some() {
+        extend(env, &key);
+    }
+    value
+}
+
+/// Set the ledger sequence after which `id` becomes archivable.
+pub fn set_archive_eligible_at(env: &Env, id: &BountyId, eligible_at: u32) {
+    let key = DataKey::ArchiveEligibleAt(id.clone());
+    env.storage().persistent().set(&key, &eligible_at);
+    extend(env, &key);
+}
+
+/// Remove the grace-period marker once a bounty has been archived.
+pub fn remove_archive_eligible_at(env: &Env, id: &BountyId) {
+    env.storage()
+        .persistent()
+        .remove(&DataKey::ArchiveEligibleAt(id.clone()));
 }
 
 pub fn store_bounty_meta(env: &Env, id: &BountyId, meta: &BountyMeta) {

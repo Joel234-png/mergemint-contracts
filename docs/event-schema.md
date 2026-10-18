@@ -70,6 +70,12 @@ Contract events emitted for indexer integration.
 - **Trigger**: Contributor metadata is updated via `update_contributor_metadata`
 - **Purpose**: Notify indexer of contributor profile changes so cached profiles stay fresh
 
+### bounty_archived
+- **Topics**: `(Symbol("bounty_archived"),)`
+- **Data**: `bounty_id`
+- **Trigger**: `archive_bounty` compacts a finished bounty into a `BountySummary`
+- **Purpose**: Tell the indexer the full bounty record is gone so it can rely on `get_bounty_summary` / the degenerate `get_bounty` fallback for this id going forward
+
 ### reputation_changed
 - **Topics**: `(Symbol("reputation_changed"), contributor_address)`
 - **Data**: `(old_reputation, new_reputation, reason)`

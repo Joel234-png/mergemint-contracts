@@ -49,6 +49,18 @@ pub enum DataKey {
     /// Paged open-bounties shard. `page` is 0-indexed.
     OpenBountiesPage(u32),
     Approvals(BountyId),
+    /// Compacted summary record for a finished (completed/cancelled) bounty,
+    /// written by `archive_bounty`. Once archived, the full `Bounty(id)` and
+    /// `BountyMeta(id)` entries are removed to stop paying TTL-extension rent
+    /// on data nobody reads anymore; `get_bounty` falls back to this record.
+    BountyArchive(BountyId),
+    /// Ledger sequence after which a finished bounty becomes eligible for
+    /// `archive_bounty`. Written on the first (otherwise-failing) archive
+    /// attempt against a finished bounty that has no marker yet, so the
+    /// grace period is measured from "someone first tried to archive this"
+    /// rather than from the exact completion/cancellation ledger (which the
+    /// contract does not currently record).
+    ArchiveEligibleAt(BountyId),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -118,6 +130,21 @@ pub struct PageInfo {
     pub limit: u32,
     /// Total number of open bounties at query time.
     pub total: u32,
+}
+
+/// Compacted record kept for a bounty after it has been archived.
+///
+/// Retains just enough data for history queries (id, creator, assignee,
+/// status, reward) while the full `Bounty` and `BountyMeta` entries are
+/// dropped from storage to stop accruing TTL-extension rent.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct BountySummary {
+    pub id: BountyId,
+    pub creator: Address,
+    pub assignee: Option<Address>,
+    pub status: Symbol,
+    pub reward: i128,
 }
 
 impl Contributor {

@@ -6,6 +6,12 @@ use crate::symbols::{
 /// Minimum reward amount enforced at bounty creation.
 const MIN_REWARD_AMOUNT: i128 = 100;
 
+/// Minimum number of ledgers a bounty must sit in a terminal status
+/// (`"completed"` or `"cancelled"`) before anyone can archive it. Chosen to
+/// give indexers/UIs a grace window to read the full record before it is
+/// compacted. At ~5s/ledger this is roughly 1 day.
+const ARCHIVE_GRACE_PERIOD_LEDGERS: u32 = 17_280;
+
 /// Maximum number of tags a bounty may carry. Documented in
 /// `docs/contract-reference.md`. Enforced by `validate_tags`, used from both
 /// `create_bounty` and `update_tags` so a bounty can never accumulate more
@@ -1005,6 +1011,69 @@ impl MergeMintContract {
 
         bounty.tags = tags;
         storage::store_bounty(&env, &bounty_id, &bounty);
+    }
+
+    /// Archive a finished bounty, compacting it into a `BountySummary` and
+    /// removing the full `Bounty`/`BountyMeta` records to stop extending
+    /// their TTL (and so paying rent on data nobody reads anymore).
+    ///
+    /// Only bounties in a terminal status (`"completed"` or `"cancelled"`)
+    /// can be archived. Callable by anyone (not just the creator), subject
+    /// to a grace period: the first call against an eligible bounty sets a
+    /// grace-period marker and fails with `DeadlineNotPassed`; a subsequent
+    /// call made at least `ARCHIVE_GRACE_PERIOD_LEDGERS` later succeeds.
+    ///
+    /// After archiving, `get_bounty` keeps returning a (summary-only)
+    /// `Bounty` for `bounty_id` so existing callers do not start seeing
+    /// `None` for bounties that used to exist.
+    ///
+    /// # Panics
+    /// * If `bounty_id` does not exist (`ContractError::BountyNotFound`).
+    /// * If the bounty is not completed or cancelled (`ContractError::InvalidStatus`).
+    /// * If the grace period has not yet elapsed (`ContractError::DeadlineNotPassed`).
+    pub fn archive_bounty(env: Env, bounty_id: BountyId) {
+        let bounty = match storage::get_bounty(&env, &bounty_id) {
+            Some(b) => b,
+            None => fail(ContractError::BountyNotFound),
+        };
+
+        let is_finished = bounty.status == Symbol::new(&env, STATUS_COMPLETED)
+            || bounty.status == Symbol::new(&env, STATUS_CANCELLED);
+        if !is_finished {
+            fail(ContractError::InvalidStatus);
+        }
+
+        let now = env.ledger().sequence();
+        match storage::get_archive_eligible_at(&env, &bounty_id) {
+            None => {
+                storage::set_archive_eligible_at(
+                    &env,
+                    &bounty_id,
+                    now + ARCHIVE_GRACE_PERIOD_LEDGERS,
+                );
+                fail(ContractError::DeadlineNotPassed);
+            }
+            Some(eligible_at) => {
+                if now < eligible_at {
+                    fail(ContractError::DeadlineNotPassed);
+                }
+            }
+        }
+
+        let assignee = bounty.assignees.get(0).map(|(address, _)| address);
+        let summary = BountySummary {
+            id: bounty_id.clone(),
+            creator: bounty.creator.clone(),
+            assignee,
+            status: bounty.status.clone(),
+            reward: bounty.reward_amount,
+        };
+
+        storage::store_bounty_archive(&env, &bounty_id, &summary);
+        storage::remove_bounty_body(&env, &bounty_id);
+        storage::remove_archive_eligible_at(&env, &bounty_id);
+
+        events::emit_bounty_archived(&env, &bounty_id);
     }
 }
 

@@ -63,13 +63,57 @@ impl MergeMintContract {
     }
 
     /// Return a single bounty by its ID, or `None` if it does not exist.
+    ///
+    /// If `bounty_id` has been archived (see `archive_bounty`), the full
+    /// record no longer exists; this falls back to the compacted
+    /// `BountySummary` and reconstructs a degenerate `Bounty` (empty tags,
+    /// milestones, verifiers; a single assignee slot if the summary has
+    /// one) so existing callers keep getting a `Bounty` rather than `None`.
     pub fn get_bounty(env: Env, bounty_id: BountyId) -> Option<Bounty> {
         // Never-allocated IDs (sequence >= count) and pruned entries (sequence
         // < count but missing from storage) both return None without panicking.
         if !storage::bounty_id_was_allocated(&env, &bounty_id) {
             return None;
         }
-        storage::get_bounty(&env, &bounty_id)
+        if let Some(bounty) = storage::get_bounty(&env, &bounty_id) {
+            return Some(bounty);
+        }
+        storage::get_bounty_archive(&env, &bounty_id).map(|summary| {
+            let assignees = match summary.assignee {
+                Some(address) => {
+                    let mut v = Vec::new(&env);
+                    v.push_back((address, 10_000u32));
+                    v
+                }
+                None => Vec::new(&env),
+            };
+            Bounty {
+                creator: summary.creator,
+                reward_amount: summary.reward,
+                // The original reward_token is not retained in the summary;
+                // this placeholder (the contract's own address) is never a
+                // real payout destination and must not be used for
+                // transfers. Callers that need the real token should use
+                // off-chain indexer history instead.
+                reward_token: env.current_contract_address(),
+                assignees,
+                max_assignees: 1,
+                status: summary.status,
+                min_reputation: 0,
+                deadline: None,
+                required_verifiers: None,
+                approval_threshold: 0,
+                tags: Vec::new(&env),
+                milestones: Vec::new(&env),
+            }
+        })
+    }
+
+    /// Return the archived summary for `bounty_id`, or `None` if it has not
+    /// been archived. Lighter weight than `get_bounty` for history/listing
+    /// UIs that only need id/creator/assignee/status/reward.
+    pub fn get_bounty_summary(env: Env, bounty_id: BountyId) -> Option<BountySummary> {
+        storage::get_bounty_archive(&env, &bounty_id)
     }
 
     /// Return the off-chain-facing metadata (title, description) for each of
