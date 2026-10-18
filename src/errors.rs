@@ -49,6 +49,10 @@ pub enum ContractError {
     OnlyPartyCanAddEvidence,
     EvidenceLimitReached,
     DisputeAlreadyResolved,
+    NoPendingResolution,
+    AppealWindowClosed,
+    AlreadyAppealed,
+    FinalizeTooEarly,
 }
 
 /// Convert a `ContractError` to its canonical panic message and panic.
@@ -107,5 +111,9 @@ pub const fn message(e: ContractError) -> &'static str {
         }
         ContractError::EvidenceLimitReached => "dispute evidence limit reached",
         ContractError::DisputeAlreadyResolved => "dispute has already been resolved",
+        ContractError::NoPendingResolution => "no pending dispute decision for this bounty",
+        ContractError::AppealWindowClosed => "the appeal window has closed",
+        ContractError::AlreadyAppealed => "this dispute has already been appealed",
+        ContractError::FinalizeTooEarly => "the appeal window has not yet passed",
     }
 }

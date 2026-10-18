@@ -113,6 +113,18 @@ pub fn emit_dispute_resolved(
     );
 }
 
+pub fn emit_dispute_appealed(env: &Env, bounty_id: &BountyId, caller: &Address) {
+    let topic = Symbol::new(env, "dispute_appealed");
+    env.events()
+        .publish((topic, caller.clone()), bounty_id.clone());
+}
+
+pub fn emit_dispute_finalized(env: &Env, bounty_id: &BountyId, arbitrator: &Address) {
+    let topic = Symbol::new(env, "dispute_finalized");
+    env.events()
+        .publish((topic, arbitrator.clone()), bounty_id.clone());
+}
+
 pub fn emit_milestone_completed(
     env: &Env,
     bounty_id: &BountyId,

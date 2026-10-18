@@ -282,4 +282,22 @@ impl MergeMintContract {
     pub fn get_dispute_evidence(env: Env, bounty_id: BountyId) -> Vec<soroban_sdk::BytesN<32>> {
         storage::get_dispute_evidence(&env, &bounty_id)
     }
+
+    /// Return the admin-configured dispute appeal window, in ledgers. `0`
+    /// means decisions are paid out immediately (the default).
+    pub fn get_appeal_window(env: Env) -> u32 {
+        storage::get_appeal_window(&env)
+    }
+
+    /// Return the pending (undecided-until-finalized) dispute resolution for
+    /// `bounty_id`, if one has been recorded.
+    pub fn get_pending_resolution(env: Env, bounty_id: BountyId) -> Option<PendingResolution> {
+        storage::get_pending_resolution(&env, &bounty_id)
+    }
+
+    /// Return whether `bounty_id`'s dispute has already used its one
+    /// allowed appeal.
+    pub fn get_dispute_appealed(env: Env, bounty_id: BountyId) -> bool {
+        storage::get_dispute_appealed(&env, &bounty_id)
+    }
 }

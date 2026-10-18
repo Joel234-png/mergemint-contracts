@@ -64,6 +64,25 @@ pub enum DataKey {
     UnclaimedAt(BountyId, Address),
     /// Evidence hashes attached to a disputed bounty.
     DisputeEvidence(BountyId),
+    /// Admin-configured appeal window, in ledgers, after a dispute decision
+    /// and before it is finalized. `0` keeps the previous immediate-payout
+    /// behaviour.
+    AppealWindow,
+    /// A dispute decision awaiting finalization (or appeal) for a bounty.
+    PendingResolution(BountyId),
+    /// Whether the single allowed appeal has already been used for a dispute.
+    DisputeAppealed(BountyId),
+}
+
+/// An arbitrator's decision on a dispute, held in escrow until the appeal
+/// window passes (`finalize_dispute`) or it is appealed (`appeal_dispute`).
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct PendingResolution {
+    pub arbitrator: Address,
+    pub resolution: Symbol,
+    /// Ledger sequence at which the decision was recorded.
+    pub decided_at: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

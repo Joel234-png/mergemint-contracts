@@ -41,7 +41,7 @@
 //! append and swap-remove semantics.
 use soroban_sdk::{Address, Env, Symbol, Vec};
 
-use crate::types::{Bounty, BountyId, BountyMeta, Contributor, DataKey};
+use crate::types::{Bounty, BountyId, BountyMeta, Contributor, DataKey, PendingResolution};
 
 /// Terminal statuses after which a bounty is recorded in a contributor's
 /// history index. Kept in sync with the status literals in `contract/mutations.rs`.
@@ -759,5 +759,58 @@ pub fn append_dispute_evidence(env: &Env, bounty_id: &BountyId, hash: &soroban_s
     evidence.push_back(hash.clone());
     let key = DataKey::DisputeEvidence(bounty_id.clone());
     env.storage().persistent().set(&key, &evidence);
+    extend(env, &key);
+}
+
+// ── Dispute appeal window ─────────────────────────────────────────────────────
+
+/// Returns the configured appeal window, in ledgers. `0` keeps the
+/// immediate-payout behaviour (the default).
+pub fn get_appeal_window(env: &Env) -> u32 {
+    env.storage().instance().get(&DataKey::AppealWindow).unwrap_or(0)
+}
+
+/// Configure the appeal window, in ledgers. `0` disables it.
+pub fn set_appeal_window(env: &Env, ledgers: u32) {
+    env.storage().instance().set(&DataKey::AppealWindow, &ledgers);
+}
+
+/// Returns the pending (undecided) dispute resolution for `bounty_id`, if any.
+pub fn get_pending_resolution(env: &Env, bounty_id: &BountyId) -> Option<PendingResolution> {
+    let key = DataKey::PendingResolution(bounty_id.clone());
+    let result = env.storage().persistent().get(&key);
+    if result.is_some() {
+        extend(env, &key);
+    }
+    result
+}
+
+/// Store a dispute decision awaiting finalization or appeal.
+pub fn set_pending_resolution(env: &Env, bounty_id: &BountyId, resolution: &PendingResolution) {
+    let key = DataKey::PendingResolution(bounty_id.clone());
+    env.storage().persistent().set(&key, resolution);
+    extend(env, &key);
+}
+
+/// Remove a bounty's pending dispute resolution (after finalize or appeal).
+pub fn remove_pending_resolution(env: &Env, bounty_id: &BountyId) {
+    let key = DataKey::PendingResolution(bounty_id.clone());
+    env.storage().persistent().remove(&key);
+}
+
+/// Returns whether `bounty_id`'s dispute has already used its one allowed appeal.
+pub fn get_dispute_appealed(env: &Env, bounty_id: &BountyId) -> bool {
+    let key = DataKey::DisputeAppealed(bounty_id.clone());
+    let result: Option<bool> = env.storage().persistent().get(&key);
+    if result.is_some() {
+        extend(env, &key);
+    }
+    result.unwrap_or(false)
+}
+
+/// Mark `bounty_id`'s dispute as having used its one allowed appeal.
+pub fn set_dispute_appealed(env: &Env, bounty_id: &BountyId) {
+    let key = DataKey::DisputeAppealed(bounty_id.clone());
+    env.storage().persistent().set(&key, &true);
     extend(env, &key);
 }
