@@ -120,3 +120,17 @@ pub fn emit_claim_released(env: &Env, bounty_id: &BountyId, released_by: &Addres
     env.events()
         .publish((topic, released_by.clone()), bounty_id.clone());
 }
+
+/// Emitted when the admin adds a token to the reward-token allowlist.
+pub fn emit_reward_token_added(env: &Env, admin: &Address, token: &Address) {
+    let topic = Symbol::new(env, "reward_token_added");
+    env.events()
+        .publish((topic, admin.clone()), token.clone());
+}
+
+/// Emitted when the admin removes a token from the reward-token allowlist.
+pub fn emit_reward_token_removed(env: &Env, admin: &Address, token: &Address) {
+    let topic = Symbol::new(env, "reward_token_removed");
+    env.events()
+        .publish((topic, admin.clone()), token.clone());
+}

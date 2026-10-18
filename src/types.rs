@@ -59,6 +59,8 @@ pub enum DataKey {
     ReputationPenalty,
     /// Address authorized to perform admin-only operations.
     Admin,
+    /// Set of reward token addresses the admin has allow-listed.
+    AllowedRewardToken(Address),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

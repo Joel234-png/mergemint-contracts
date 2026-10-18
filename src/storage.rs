@@ -701,3 +701,30 @@ pub fn set_reputation_penalty(env: &Env, penalty: u32) {
         .instance()
         .set(&DataKey::ReputationPenalty, &penalty);
 }
+
+// ── Reward token allowlist ────────────────────────────────────────────────────
+//
+// Keyed per-token so membership checks and admin add/remove are O(1) without
+// needing to read/rewrite a single growing list. `create_bounty` rejects any
+// `reward_token` that is not on this allowlist. Removing a token only clears
+// its membership flag; it never touches existing `Bounty` records, so
+// in-flight bounties denominated in a removed token keep paying out normally.
+
+pub fn is_reward_token_allowed(env: &Env, token: &Address) -> bool {
+    env.storage()
+        .instance()
+        .get(&DataKey::AllowedRewardToken(token.clone()))
+        .unwrap_or(false)
+}
+
+pub fn add_allowed_reward_token(env: &Env, token: &Address) {
+    env.storage()
+        .instance()
+        .set(&DataKey::AllowedRewardToken(token.clone()), &true);
+}
+
+pub fn remove_allowed_reward_token(env: &Env, token: &Address) {
+    env.storage()
+        .instance()
+        .remove(&DataKey::AllowedRewardToken(token.clone()));
+}

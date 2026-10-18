@@ -48,6 +48,7 @@ pub enum ContractError {
     MilestoneDeadlinePassed,
     NotAdmin,
     AdminAlreadySet,
+    RewardTokenNotAllowed,
 }
 
 /// Convert a `ContractError` to its canonical panic message and panic.
@@ -105,5 +106,6 @@ pub const fn message(e: ContractError) -> &'static str {
         ContractError::MilestoneDeadlinePassed => "milestone deadline has passed",
         ContractError::NotAdmin => "caller is not the contract admin",
         ContractError::AdminAlreadySet => "admin has already been initialized",
+        ContractError::RewardTokenNotAllowed => "reward_token is not on the admin allowlist",
     }
 }

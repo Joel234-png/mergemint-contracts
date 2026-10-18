@@ -222,6 +222,10 @@ impl MergeMintContract {
 
         validate_reward_token(&env, &reward_token);
 
+        if !storage::is_reward_token_allowed(&env, &reward_token) {
+            fail(ContractError::RewardTokenNotAllowed);
+        }
+
         if !milestones.is_empty() {
             let mut total: i128 = 0;
             let mut previous_deadline: Option<u32> = None;
@@ -1074,6 +1078,29 @@ impl MergeMintContract {
     pub fn set_reputation_penalty(env: Env, admin: Address, penalty: u32) {
         require_admin(&env, &admin);
         storage::set_reputation_penalty(&env, penalty);
+    }
+
+    /// Add a token to the on-chain reward-token allowlist. Only tokens on
+    /// this list may be used as `reward_token` in `create_bounty`.
+    ///
+    /// # Authorization
+    /// Admin-only; requires auth from `admin`.
+    pub fn add_reward_token(env: Env, admin: Address, token: Address) {
+        require_admin(&env, &admin);
+        storage::add_allowed_reward_token(&env, &token);
+        events::emit_reward_token_added(&env, &admin, &token);
+    }
+
+    /// Remove a token from the on-chain reward-token allowlist. Existing
+    /// bounties already denominated in `token` are unaffected — only future
+    /// `create_bounty` calls are rejected.
+    ///
+    /// # Authorization
+    /// Admin-only; requires auth from `admin`.
+    pub fn remove_reward_token(env: Env, admin: Address, token: Address) {
+        require_admin(&env, &admin);
+        storage::remove_allowed_reward_token(&env, &token);
+        events::emit_reward_token_removed(&env, &admin, &token);
     }
 }
 

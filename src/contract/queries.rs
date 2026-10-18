@@ -275,6 +275,11 @@ impl MergeMintContract {
         storage::get_admin(&env)
     }
 
+    /// Return `true` if `token` is on the admin-managed reward-token allowlist.
+    pub fn is_reward_token_allowed(env: Env, token: Address) -> bool {
+        storage::is_reward_token_allowed(&env, &token)
+    }
+
     /// Return the current claim window (in ledgers) used by `release_stale_claim`.
     pub fn get_claim_window(env: Env) -> u32 {
         storage::get_claim_window(&env)
