@@ -63,7 +63,7 @@ fn distribute_payout(
 
         let mut contrib = storage::get_contributor(env, &assignee)
             .unwrap_or_else(|| Contributor::new(assignee.clone()));
-        contrib.reputation += 10;
+        set_reputation(env, &mut contrib, &assignee, 10, "completion");
         contrib.total_earned += payout;
         contrib.contribution_count += 1;
         if contrib.active_claims > 0 {
@@ -74,6 +74,28 @@ fn distribute_payout(
     }
 
     primary_assignee
+}
+
+/// Apply a reputation delta to `contrib` and emit a single `reputation_changed`
+/// event documenting the old value, new value and reason.
+///
+/// All reputation writes must go through this helper so that every change is
+/// observable by indexers (see `docs/event-schema.md`).
+fn set_reputation(env: &Env, contrib: &mut Contributor, address: &Address, delta: i64, reason: &str) {
+    let old_reputation = contrib.reputation;
+    let new_reputation = if delta >= 0 {
+        old_reputation.saturating_add(delta as u32)
+    } else {
+        old_reputation.saturating_sub((-delta) as u32)
+    };
+    contrib.reputation = new_reputation;
+    events::emit_reputation_changed(
+        env,
+        address,
+        old_reputation,
+        new_reputation,
+        Symbol::new(env, reason),
+    );
 }
 
 /// Decrement a contributor's active claims counter, if greater than zero.
@@ -704,7 +726,7 @@ impl MergeMintContract {
                     let mut contrib = storage::get_contributor(&env, &assignee)
                         .unwrap_or_else(|| Contributor::new(assignee.clone()));
 
-                    contrib.reputation += 10;
+                    set_reputation(&env, &mut contrib, &assignee, 10, "completion");
                     contrib.total_earned += payout;
                     contrib.contribution_count += 1;
                     decrement_active_claims(&mut contrib);

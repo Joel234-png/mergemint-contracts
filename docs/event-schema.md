@@ -70,6 +70,20 @@ Contract events emitted for indexer integration.
 - **Trigger**: Contributor metadata is updated via `update_contributor_metadata`
 - **Purpose**: Notify indexer of contributor profile changes so cached profiles stay fresh
 
+### reputation_changed
+- **Topics**: `(Symbol("reputation_changed"), contributor_address)`
+- **Data**: `(old_reputation, new_reputation, reason)`
+- **Trigger**: Emitted every time a contributor's reputation score is written via the
+  `set_reputation` helper in `src/contract/mutations.rs`
+- **Reasons** (`reason` symbol):
+  - `"completion"` — reward applied when a bounty assignee is paid out on completion
+    (including arbitrator-resolved completion)
+  - `"penalty"` — reserved for future penalty paths (e.g. abandoned claims)
+  - `"decay"` — reserved for future time-based reputation decay
+- **Purpose**: Let the leaderboard and profile pages show why a contributor's score moved.
+  Unlike the bounty-scoped events above, this event is keyed by `contributor_address`
+  and carries no `bounty_id`.
+
 ## Queries
 
 ### get_contributor_bounty_history
