@@ -56,6 +56,12 @@ pub enum DataKey {
     CreatorOpenLimit,
     /// Current count of open+claimed bounties for a given creator.
     CreatorOpenCount(Address),
+    /// Admin-configured cooldown (in ledgers) a contributor must wait after
+    /// unclaiming a bounty before re-claiming it. `0` disables the cooldown.
+    ClaimCooldown,
+    /// Ledger sequence at which `contributor` last unclaimed `bounty_id`.
+    /// Stored in temporary storage so it naturally expires.
+    UnclaimedAt(BountyId, Address),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

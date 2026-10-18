@@ -699,3 +699,38 @@ pub fn decrement_creator_open_count(env: &Env, creator: &Address) {
         set_creator_open_count(env, creator, current - 1);
     }
 }
+
+// ── Claim cooldown ────────────────────────────────────────────────────────────
+
+/// Returns the configured claim cooldown, in ledgers. `0` disables it
+/// (the default).
+pub fn get_claim_cooldown(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::ClaimCooldown)
+        .unwrap_or(0)
+}
+
+/// Configure the claim cooldown, in ledgers. `0` disables it.
+pub fn set_claim_cooldown(env: &Env, ledgers: u32) {
+    env.storage().instance().set(&DataKey::ClaimCooldown, &ledgers);
+}
+
+/// Record that `contributor` unclaimed `bounty_id` at the current ledger
+/// sequence. Stored in **temporary** storage with a TTL equal to the
+/// configured cooldown (or a minimum of one ledger) so the entry expires on
+/// its own once the cooldown has elapsed.
+pub fn record_unclaim(env: &Env, bounty_id: &BountyId, contributor: &Address) {
+    let key = DataKey::UnclaimedAt(bounty_id.clone(), contributor.clone());
+    let now = env.ledger().sequence();
+    env.storage().temporary().set(&key, &now);
+    let ttl = get_claim_cooldown(env).max(1);
+    env.storage().temporary().extend_ttl(&key, ttl, ttl);
+}
+
+/// Returns the ledger sequence at which `contributor` last unclaimed
+/// `bounty_id`, if that record hasn't expired yet.
+pub fn get_unclaimed_at(env: &Env, bounty_id: &BountyId, contributor: &Address) -> Option<u32> {
+    let key = DataKey::UnclaimedAt(bounty_id.clone(), contributor.clone());
+    env.storage().temporary().get(&key)
+}

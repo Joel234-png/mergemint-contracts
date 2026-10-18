@@ -44,6 +44,8 @@ pub enum ContractError {
     MetadataEmpty,
     CreatorLimitReached,
     NotAdmin,
+    NotAssignee,
+    ClaimCooldownActive,
 }
 
 /// Convert a `ContractError` to its canonical panic message and panic.
@@ -95,5 +97,7 @@ pub const fn message(e: ContractError) -> &'static str {
         ContractError::MetadataEmpty => "metadata must not be empty",
         ContractError::CreatorLimitReached => "creator has reached the open bounty limit",
         ContractError::NotAdmin => "caller is not the contract admin",
+        ContractError::NotAssignee => "caller is not an assignee on this bounty",
+        ContractError::ClaimCooldownActive => "claim cooldown is still active for this contributor",
     }
 }

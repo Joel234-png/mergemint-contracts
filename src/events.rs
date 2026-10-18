@@ -33,6 +33,12 @@ pub fn emit_bounty_disputed(env: &Env, bounty_id: &BountyId, caller: &Address) {
         .publish((topic, caller.clone()), bounty_id.clone());
 }
 
+pub fn emit_bounty_unclaimed(env: &Env, bounty_id: &BountyId, contributor: &Address) {
+    let topic = Symbol::new(env, "bounty_unclaimed");
+    env.events()
+        .publish((topic, contributor.clone()), bounty_id.clone());
+}
+
 pub fn emit_bounty_cancelled(env: &Env, bounty_id: &BountyId, creator: &Address) {
     let topic = Symbol::new(env, "bounty_cancelled");
     env.events()

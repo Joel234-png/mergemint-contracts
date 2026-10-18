@@ -330,6 +330,15 @@ impl MergeMintContract {
             fail(ContractError::BountyAlreadyAssigned);
         }
 
+        // Claim cooldown: block a re-claim by the same contributor within
+        // `claim_cooldown` ledgers of their own unclaim on this bounty.
+        if let Some(unclaimed_at) = storage::get_unclaimed_at(&env, &bounty_id, &contributor) {
+            let cooldown = storage::get_claim_cooldown(&env);
+            if cooldown > 0 && env.ledger().sequence() < unclaimed_at + cooldown {
+                fail(ContractError::ClaimCooldownActive);
+            }
+        }
+
         // #275: use Contributor::new for default construction (DONE - all call sites updated)
         let mut contrib = storage::get_contributor(&env, &contributor)
             .unwrap_or_else(|| Contributor::new(contributor.clone()));
@@ -372,6 +381,61 @@ impl MergeMintContract {
         storage::remove_open_bounty(&env, &bounty_id);
 
         events::emit_bounty_claimed(&env, &bounty_id, &contributor);
+    }
+
+    /// Relinquish a claim on a bounty the caller is currently assigned to.
+    ///
+    /// Removes the contributor from the bounty's assignee list and decrements
+    /// their active-claims counter. If this was the only assignee, the bounty
+    /// reverts to `"open"` status and is re-listed in the open-bounties index.
+    /// A cooldown (configurable via `set_claim_cooldown`) is recorded so the
+    /// same contributor cannot immediately re-claim the bounty.
+    ///
+    /// # Panics
+    /// * If `bounty_id` does not exist.
+    /// * If the caller is not currently an assignee on this bounty.
+    ///
+    /// # Authorization
+    /// Requires auth from `contributor`.
+    pub fn unclaim_bounty(env: Env, contributor: Address, bounty_id: BountyId) {
+        contributor.require_auth();
+
+        let mut bounty = match storage::get_bounty(&env, &bounty_id) {
+            Some(b) => b,
+            None => fail(ContractError::BountyNotFound),
+        };
+
+        let is_assignee = bounty.assignees.iter().any(|(addr, _)| addr == contributor);
+        if !is_assignee {
+            fail(ContractError::NotAssignee);
+        }
+
+        let mut remaining: Vec<(Address, u32)> = Vec::new(&env);
+        for (addr, share) in bounty.assignees.iter() {
+            if addr != contributor {
+                remaining.push_back((addr, share));
+            }
+        }
+        bounty.assignees = remaining;
+
+        let mut contrib = storage::get_contributor(&env, &contributor)
+            .unwrap_or_else(|| Contributor::new(contributor.clone()));
+        decrement_active_claims(&mut contrib);
+        storage::store_contributor(&env, &contributor, &contrib);
+
+        if bounty.assignees.is_empty() {
+            let previous_status = bounty.status.clone();
+            bounty.status = Symbol::new(&env, STATUS_OPEN);
+            storage::store_bounty(&env, &bounty_id, &bounty);
+            storage::move_bounty_status(&env, &bounty_id, &previous_status, &bounty.status);
+            storage::add_open_bounty(&env, &bounty_id);
+        } else {
+            storage::store_bounty(&env, &bounty_id, &bounty);
+        }
+
+        storage::record_unclaim(&env, &bounty_id, &contributor);
+
+        events::emit_bounty_unclaimed(&env, &bounty_id, &contributor);
     }
 
     /// Complete a single milestone and pay out its reward.
@@ -963,6 +1027,30 @@ impl MergeMintContract {
         }
 
         storage::set_creator_open_limit(&env, limit);
+    }
+
+    /// Set the admin-configurable claim cooldown (in ledgers) that a
+    /// contributor must wait after unclaiming a bounty before re-claiming it.
+    /// A value of `0` disables the cooldown (the default).
+    ///
+    /// Uses the same lazily-established admin as `set_creator_open_limit`.
+    ///
+    /// # Authorization
+    /// Requires auth from `caller`. Restricted to the contract admin once one
+    /// has been established.
+    pub fn set_claim_cooldown(env: Env, caller: Address, ledgers: u32) {
+        caller.require_auth();
+
+        match storage::get_admin(&env) {
+            Some(admin) => {
+                if caller != admin {
+                    fail(ContractError::NotAdmin);
+                }
+            }
+            None => storage::set_admin(&env, &caller),
+        }
+
+        storage::set_claim_cooldown(&env, ledgers);
     }
 }
 

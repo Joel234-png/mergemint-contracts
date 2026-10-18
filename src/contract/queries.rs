@@ -262,4 +262,19 @@ impl MergeMintContract {
     pub fn get_creator_open_count(env: Env, creator: Address) -> u32 {
         storage::get_creator_open_count(&env, &creator)
     }
+
+    /// Return the admin-configured claim cooldown, in ledgers. `0` means the
+    /// cooldown is disabled (the default).
+    pub fn get_claim_cooldown(env: Env) -> u32 {
+        storage::get_claim_cooldown(&env)
+    }
+
+    /// Return contract-wide configuration values in a single call:
+    /// `(creator_open_limit, claim_cooldown)`.
+    pub fn get_config(env: Env) -> (u32, u32) {
+        (
+            storage::get_creator_open_limit(&env),
+            storage::get_claim_cooldown(&env),
+        )
+    }
 }
