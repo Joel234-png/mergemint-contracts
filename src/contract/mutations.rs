@@ -1,6 +1,6 @@
 use crate::symbols::{
-    self, SymbolKind, STATUS_CANCELLED, STATUS_COMPLETED, STATUS_DISPUTED, STATUS_IN_PROGRESS,
-    STATUS_OPEN,
+    self, SymbolKind, STATUS_CANCELLED, STATUS_COMPLETED, STATUS_DISPUTED, STATUS_EXPIRED,
+    STATUS_IN_PROGRESS, STATUS_OPEN, STATUS_SUBMITTED,
 };
 
 /// Minimum reward amount enforced at bounty creation.
@@ -861,20 +861,69 @@ impl MergeMintContract {
             fail(ContractError::BountyNotOpen);
         }
 
-        // Refund escrowed reward to creator before mutating status.
-        let token = TokenClient::new(&env, &bounty.reward_token);
-        token.transfer(
-            &env.current_contract_address(),
-            &bounty.creator,
-            &bounty.reward_amount,
-        );
-
+        // Unlike `cancel_bounty`, expiry does not refund the creator immediately:
+        // the escrowed reward stays locked so the creator can `reopen_bounty`
+        // without having to re-fund the bounty. If the creator does not wish to
+        // reopen, this leaves funds recoverable only via a future reopen.
         let previous_status = bounty.status.clone();
-        bounty.status = Symbol::new(&env, STATUS_CANCELLED);
+        bounty.status = Symbol::new(&env, STATUS_EXPIRED);
         storage::store_bounty(&env, &bounty_id, &bounty);
         storage::move_bounty_status(&env, &bounty_id, &previous_status, &bounty.status);
+        storage::remove_open_bounty(&env, &bounty_id);
 
         events::emit_bounty_expired(&env, &bounty_id, &bounty.creator);
+    }
+
+    /// Reopen an expired bounty, moving it back to `"open"` with a new deadline.
+    ///
+    /// Only usable while the escrowed reward has not been refunded, i.e. while
+    /// the bounty is still in the `"expired"` state (see `expire_bounty`, which
+    /// intentionally does not refund the creator so that `reopen_bounty` has
+    /// funds to work with).
+    ///
+    /// # Arguments
+    /// * `creator` - The wallet that created the bounty.
+    /// * `bounty_id` - The bounty to reopen.
+    /// * `new_deadline` - The new ledger sequence deadline. Must be strictly in
+    ///   the future (greater than the current ledger sequence).
+    ///
+    /// # Panics
+    /// * If `bounty_id` does not exist (`ContractError::BountyNotFound`).
+    /// * If `creator` is not the bounty creator (`ContractError::NotBountyCreator`).
+    /// * If the bounty is not currently `"expired"` (`ContractError::BountyNotExpired`).
+    /// * If `new_deadline` is not strictly greater than the current ledger
+    ///   sequence (`ContractError::InvalidNewDeadline`).
+    ///
+    /// # Authorization
+    /// Requires auth from `creator`.
+    pub fn reopen_bounty(env: Env, creator: Address, bounty_id: BountyId, new_deadline: u32) {
+        creator.require_auth();
+
+        let mut bounty = match storage::get_bounty(&env, &bounty_id) {
+            Some(b) => b,
+            None => fail(ContractError::BountyNotFound),
+        };
+
+        if creator != bounty.creator {
+            fail(ContractError::NotBountyCreator);
+        }
+
+        if bounty.status != Symbol::new(&env, STATUS_EXPIRED) {
+            fail(ContractError::BountyNotExpired);
+        }
+
+        if new_deadline <= env.ledger().sequence() {
+            fail(ContractError::InvalidNewDeadline);
+        }
+
+        let previous_status = bounty.status.clone();
+        bounty.status = Symbol::new(&env, STATUS_OPEN);
+        bounty.deadline = Some(new_deadline);
+        storage::store_bounty(&env, &bounty_id, &bounty);
+        storage::move_bounty_status(&env, &bounty_id, &previous_status, &bounty.status);
+        storage::add_open_bounty(&env, &bounty_id);
+
+        events::emit_bounty_reopened(&env, &bounty_id, &creator, new_deadline);
     }
 
     /// Extend the deadline of an active bounty.

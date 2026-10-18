@@ -42,6 +42,11 @@ pub enum ContractError {
     MilestoneRewardsMismatch,
     RewardAmountOverflow,
     MetadataEmpty,
+    BountyNotExpired,
+    InvalidNewDeadline,
+    NotAssignee,
+    AmountMustBePositive,
+    SubmissionRequired,
 }
 
 /// Convert a `ContractError` to its canonical panic message and panic.
@@ -91,5 +96,10 @@ pub const fn message(e: ContractError) -> &'static str {
         ContractError::MilestoneRewardsMismatch => "milestone rewards do not sum to reward_amount",
         ContractError::RewardAmountOverflow => "reward amount arithmetic overflow",
         ContractError::MetadataEmpty => "metadata must not be empty",
+        ContractError::BountyNotExpired => "bounty is not expired",
+        ContractError::InvalidNewDeadline => "new deadline must be in the future",
+        ContractError::NotAssignee => "caller is not an assignee of this bounty",
+        ContractError::AmountMustBePositive => "amount must be positive",
+        ContractError::SubmissionRequired => "a work submission is required before approval",
     }
 }
