@@ -638,3 +638,66 @@ fn append_contributor_history(env: &Env, address: &Address, bounty_id: &BountyId
     env.storage().persistent().set(&key, &list);
     extend(env, &key);
 }
+
+// ── Admin ─────────────────────────────────────────────────────────────────────
+
+pub fn get_admin(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::Admin)
+}
+
+pub fn set_admin(env: &Env, admin: &Address) {
+    env.storage().instance().set(&DataKey::Admin, admin);
+}
+
+// ── Claim window / stale claims ───────────────────────────────────────────────
+
+/// Default number of ledgers a claim may remain unsubmitted before it can be
+/// released via `release_stale_claim`. ~7 days at 5s/ledger.
+pub const DEFAULT_CLAIM_WINDOW: u32 = 120_960;
+
+pub fn get_claim_window(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::ClaimWindow)
+        .unwrap_or(DEFAULT_CLAIM_WINDOW)
+}
+
+pub fn set_claim_window(env: &Env, window: u32) {
+    env.storage().instance().set(&DataKey::ClaimWindow, &window);
+}
+
+pub fn get_claimed_at_ledger(env: &Env, bounty_id: &BountyId) -> Option<u32> {
+    let key = DataKey::ClaimedAtLedger(bounty_id.clone());
+    let result = env.storage().persistent().get(&key);
+    if result.is_some() {
+        extend(env, &key);
+    }
+    result
+}
+
+pub fn set_claimed_at_ledger(env: &Env, bounty_id: &BountyId, ledger: u32) {
+    let key = DataKey::ClaimedAtLedger(bounty_id.clone());
+    env.storage().persistent().set(&key, &ledger);
+    extend(env, &key);
+}
+
+pub fn clear_claimed_at_ledger(env: &Env, bounty_id: &BountyId) {
+    let key = DataKey::ClaimedAtLedger(bounty_id.clone());
+    env.storage().persistent().remove(&key);
+}
+
+/// Default reputation penalty applied when a stale claim is released.
+pub const DEFAULT_REPUTATION_PENALTY: u32 = 10;
+
+pub fn get_reputation_penalty(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::ReputationPenalty)
+        .unwrap_or(DEFAULT_REPUTATION_PENALTY)
+}
+
+pub fn set_reputation_penalty(env: &Env, penalty: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::ReputationPenalty, &penalty);
+}

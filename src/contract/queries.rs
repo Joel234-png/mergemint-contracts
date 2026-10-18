@@ -242,6 +242,16 @@ impl MergeMintContract {
     /// The list is maintained in `DataKey::ContributorBounties(creator)` and
     /// appended to on each `create_bounty` call. Returns an empty `Vec` if the
     /// address has never created a bounty.
+    /// Return the address currently configured as contract admin, if any.
+    pub fn get_admin(env: Env) -> Option<Address> {
+        storage::get_admin(&env)
+    }
+
+    /// Return the current claim window (in ledgers) used by `release_stale_claim`.
+    pub fn get_claim_window(env: Env) -> u32 {
+        storage::get_claim_window(&env)
+    }
+
     pub fn get_bounties_by_creator(
         env: Env,
         creator: Address,

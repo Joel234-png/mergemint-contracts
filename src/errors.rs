@@ -42,6 +42,10 @@ pub enum ContractError {
     MilestoneRewardsMismatch,
     RewardAmountOverflow,
     MetadataEmpty,
+    ClaimWindowNotElapsed,
+    NoActiveClaim,
+    NotAdmin,
+    AdminAlreadySet,
 }
 
 /// Convert a `ContractError` to its canonical panic message and panic.
@@ -91,5 +95,9 @@ pub const fn message(e: ContractError) -> &'static str {
         ContractError::MilestoneRewardsMismatch => "milestone rewards do not sum to reward_amount",
         ContractError::RewardAmountOverflow => "reward amount arithmetic overflow",
         ContractError::MetadataEmpty => "metadata must not be empty",
+        ContractError::ClaimWindowNotElapsed => "claim window has not elapsed yet",
+        ContractError::NoActiveClaim => "bounty has no active claim to release",
+        ContractError::NotAdmin => "caller is not the contract admin",
+        ContractError::AdminAlreadySet => "admin has already been initialized",
     }
 }

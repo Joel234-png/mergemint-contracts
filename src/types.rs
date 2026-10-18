@@ -49,6 +49,16 @@ pub enum DataKey {
     /// Paged open-bounties shard. `page` is 0-indexed.
     OpenBountiesPage(u32),
     Approvals(BountyId),
+    /// Ledger sequence at which the first assignee claimed a bounty.
+    /// Used to detect stale claims eligible for `release_stale_claim`.
+    ClaimedAtLedger(BountyId),
+    /// Number of ledgers that may elapse after a claim before it becomes
+    /// stale and eligible for `release_stale_claim`. Admin-configurable.
+    ClaimWindow,
+    /// Reputation penalty applied to assignees when a stale claim is released.
+    ReputationPenalty,
+    /// Address authorized to perform admin-only operations.
+    Admin,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -112,3 +112,11 @@ pub fn emit_contributor_metadata_updated(env: &Env, contributor: &Address, metad
     env.events()
         .publish((topic, contributor.clone()), metadata.clone());
 }
+
+/// Emitted when a stale claim is released back to `Open` via
+/// `release_stale_claim`.
+pub fn emit_claim_released(env: &Env, bounty_id: &BountyId, released_by: &Address) {
+    let topic = Symbol::new(env, "claim_released");
+    env.events()
+        .publish((topic, released_by.clone()), bounty_id.clone());
+}
