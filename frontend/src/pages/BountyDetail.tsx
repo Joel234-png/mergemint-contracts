@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { api } from '../lib/api';
 import { Bounty } from '../types';
 import { mapErrorMessage } from '../utils/format';
@@ -15,6 +15,16 @@ import { CONFIGURED_NETWORK } from '../lib/network';
 import { useTranslation } from '../i18n';
 
 /**
+ * Returns true when an error message indicates the bounty does not exist.
+ *
+ * @param message Error message from the API layer.
+ * @returns Whether the error represents a not-found response.
+ */
+function isNotFoundError(message: string): boolean {
+  return /\b404\b|not\s*found/i.test(message);
+}
+
+/**
  * Inner component rendering the bounty details, claim action, and creator top-up controls.
  *
  * @returns React element displaying bounty details or loading/error states.
@@ -25,6 +35,7 @@ function BountyDetailInner() {
   const { t } = useTranslation();
   const [bounty, setBounty] = useState<Bounty | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notFound, setNotFound] = useState(false);
   const [claiming, setClaiming] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -35,10 +46,18 @@ function BountyDetailInner() {
   function fetchBounty() {
     if (!id) return;
     setLoading(true);
+    setNotFound(false);
     api
       .getBounty(id)
       .then(setBounty)
-      .catch((err) => setError(mapErrorMessage(err instanceof Error ? err.message : String(err))))
+      .catch((err) => {
+        const message = mapErrorMessage(err instanceof Error ? err.message : String(err));
+        if (isNotFoundError(message)) {
+          setNotFound(true);
+        } else {
+          setError(message);
+        }
+      })
       .finally(() => setLoading(false));
   }
 
@@ -77,6 +96,17 @@ function BountyDetailInner() {
   }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading && !bounty) return <BountyDetailSkeleton />;
+  if (notFound) {
+    return (
+      <div className="bounty-not-found" role="alert">
+        <h1>Bounty not found</h1>
+        <p>We couldn&apos;t find a bounty with the ID &quot;{id}&quot;.</p>
+        <Link to="/bounties" className="bounty-not-found-link">
+          Back to bounty list
+        </Link>
+      </div>
+    );
+  }
   if (error && !bounty) return <p role="alert">{error}</p>;
   if (!bounty) return <p>{t('loading')}</p>;
 
@@ -156,4 +186,3 @@ export function BountyDetail() {
     </BountyErrorBoundary>
   );
 }
-

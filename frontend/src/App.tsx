@@ -8,6 +8,7 @@ import { BountyDetail } from './pages/BountyDetail';
 import { CreateBounty } from './pages/CreateBounty';
 import { ContributorProfile } from './pages/ContributorProfile';
 import { Leaderboard } from './pages/Leaderboard';
+import { NotFound } from './pages/NotFound';
 import { BountyErrorBoundary } from './components/BountyErrorBoundary';
 import { useTranslation } from './i18n';
 
@@ -74,9 +75,10 @@ export default function App() {
             element={
               <BountyErrorBoundary>
                 <ContributorProfile />
-              </BountyErrorBoundary>
+              </ContributorProfile>
             }
           />
+          <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
     </WalletProvider>
