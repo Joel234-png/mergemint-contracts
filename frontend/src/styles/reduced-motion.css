@@ -1,0 +1,48 @@
+/**
+ * Global Reduced Motion Stylesheet
+ * 
+ * WCAG 2.2 Success Criterion 2.3.3 (Animation from Interactions) compliance.
+ * Softens or eliminates non-essential motion when the user has expressed
+ * a preference for reduced motion via `prefers-reduced-motion: reduce`.
+ */
+
+@media (prefers-reduced-motion: reduce) {
+  /* Universally minimize non-essential animations & transitions */
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* Toasts: Instant appearance without sliding across screen */
+  .toast {
+    animation: none !important;
+    transform: none !important;
+    opacity: 1 !important;
+  }
+
+  /* Drawers & Modals: Prevent large translate animations while retaining visibility */
+  .tx-history-drawer {
+    animation: none !important;
+    transform: none !important;
+  }
+
+  /* Skeleton Loaders: Replace continuous pulsing with stable, non-flashing indicator */
+  .bounty-card__skeleton-line,
+  .bounty-detail-skeleton__block,
+  .page-skeleton,
+  .page-skeleton__block {
+    animation: none !important;
+    opacity: 0.75 !important;
+  }
+
+  /* Shimmer and background gradient animations */
+  .shimmer,
+  [data-shimmer="true"] {
+    animation: none !important;
+    background-position: 0 0 !important;
+  }
+}

@@ -30,6 +30,13 @@
   }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    animation: none;
+    transform: none;
+  }
+}
+
 .toast-success {
   background-color: #10b981;
   color: white;

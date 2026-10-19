@@ -43,6 +43,13 @@
   }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .tx-history-drawer {
+    animation: none;
+    transform: none;
+  }
+}
+
 .drawer-header {
   display: flex;
   justify-content: space-between;

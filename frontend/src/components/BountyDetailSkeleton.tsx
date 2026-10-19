@@ -20,6 +20,12 @@ export function BountyDetailSkeleton() {
           border-radius: 4px;
           animation: bounty-skeleton-pulse 1.4s ease-in-out infinite;
         }
+        @media (prefers-reduced-motion: reduce) {
+          .bounty-detail-skeleton__block {
+            animation: none;
+            opacity: 0.75;
+          }
+        }
       `}</style>
 
       <div
