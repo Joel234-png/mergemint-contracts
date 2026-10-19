@@ -629,10 +629,17 @@ pub fn remove_open_bounty(env: &Env, bounty_id: &BountyId) {
         }
         set_open_bounties_page(env, fp, &new_target);
 
+        // Shrink the freshly written copy when the target was on the last
+        // page; the pre-swap `last_page` would resurrect the removed id.
+        let source = if fp == last_page_idx {
+            new_target
+        } else {
+            last_page
+        };
         let mut trimmed: Vec<BountyId> = Vec::new(env);
         let mut i = 0u32;
-        while i < last_page.len() - 1 {
-            trimmed.push_back(last_page.get(i).unwrap());
+        while i < source.len() - 1 {
+            trimmed.push_back(source.get(i).unwrap());
             i += 1;
         }
         set_open_bounties_page(env, last_page_idx, &trimmed);
