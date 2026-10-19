@@ -73,10 +73,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{
+    body::Body,
     extract::State,
-    http::{header::CONTENT_TYPE, HeaderName, HeaderValue, Method, StatusCode},
+    http::{header::CONTENT_TYPE, HeaderName, HeaderValue, Method, Request, StatusCode},
     middleware,
-    response::{Html, IntoResponse},
+    middleware::Next,
+    response::{Html, IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
@@ -84,7 +86,6 @@ use tower_http::{
     cors::{AllowOrigin, CorsLayer},
     limit::RequestBodyLimitLayer,
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
-    timeout::TimeoutLayer,
     trace::TraceLayer,
 };
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
@@ -94,6 +95,8 @@ mod db;
 mod metrics;
 mod rate_limit;
 mod routes;
+#[cfg(test)]
+mod test_helpers;
 mod webhooks;
 
 use db::{new_shared_db, new_shared_idempotency_store};
@@ -113,9 +116,9 @@ use webhooks::{
 /// Maximum allowed request body size (1 MiB).
 const MAX_BODY_BYTES: usize = 1024 * 1024;
 
-/// Maximum wall-clock time allowed for a single request, including body reads
-/// and handler execution.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// Environment variable controlling the maximum duration of a non-streaming request.
+const REQUEST_TIMEOUT_SECS_ENV: &str = "REQUEST_TIMEOUT_SECS";
+const REQUEST_TIMEOUT_SECS_DEFAULT: u64 = 30;
 
 /// The canonical header name used to carry the correlation ID across service
 /// boundaries.  Clients may supply their own value; if absent a UUID v4 is
@@ -150,6 +153,10 @@ const LOG_FORMAT_ENV: &str = "LOG_FORMAT";
         routes::bounties::get_bounty_route,
         routes::bounties::claim_bounty,
         routes::bounties::bounty_stream,
+        routes::leaderboard::get_leaderboard_route,
+        routes::tx::query_audit_logs,
+        webhooks::list_subscriptions_route,
+        webhooks::get_subscription_route,
     ),
     components(schemas(
         db::Bounty,
@@ -158,6 +165,11 @@ const LOG_FORMAT_ENV: &str = "LOG_FORMAT";
         db::SortOrder,
         routes::bounties::ClaimResponse,
         routes::tx::AppError,
+        routes::tx::QueryAuditLogsResponse,
+        db::AuditLog,
+        db::LeaderboardEntry,
+        db::LeaderboardPage,
+        db::WebhookSubscription,
     )),
     tags((name = "bounties", description = "Bounty listing and live updates"))
 )]
@@ -262,6 +274,12 @@ async fn main() {
         )
         .with_state(state)
         .merge(metrics_router(metrics.clone()))
+        // Timeout wraps the handler stack, while metrics remains outermost so
+        // generated 504 responses are observed like handler responses.
+        .layer(middleware::from_fn_with_state(
+            RequestTimeout(read_request_timeout_duration()),
+            apply_request_timeout,
+        ))
         // ── Prometheus metrics middleware (#867) ───────────────────────────
         //
         // Records a per-route request counter and latency histogram, labelled
@@ -280,9 +298,7 @@ async fn main() {
         // ── CORS ───────────────────────────────────────────────────────────
         .layer(cors_layer())
         // ── Body size limit (#476) ─────────────────────────────────────────
-        .layer(RequestBodyLimitLayer::new(MAX_BODY_BYTES))
-        // ── Request timeout (#476) ─────────────────────────────────────────
-        .layer(TimeoutLayer::new(REQUEST_TIMEOUT));
+        .layer(RequestBodyLimitLayer::new(MAX_BODY_BYTES));
 
     let listener = tokio::net::TcpListener::bind(LISTEN_ADDR)
         .await
@@ -294,6 +310,44 @@ async fn main() {
         .with_graceful_shutdown(shutdown_signal())
         .await
         .expect("server error");
+}
+
+#[derive(Clone, Copy)]
+struct RequestTimeout(Duration);
+
+async fn apply_request_timeout(
+    State(timeout): State<RequestTimeout>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    if request.uri().path() == "/bounties/stream" {
+        return next.run(request).await;
+    }
+
+    match tokio::time::timeout(timeout.0, next.run(request)).await {
+        Ok(response) => response,
+        Err(_) => {
+            let (status, body) = routes::tx::AppError::gateway_timeout();
+            (status, body).into_response()
+        }
+    }
+}
+
+fn read_request_timeout_duration() -> Duration {
+    match std::env::var(REQUEST_TIMEOUT_SECS_ENV) {
+        Ok(value) => match value.parse::<u64>().ok().filter(|secs| *secs > 0) {
+            Some(secs) => Duration::from_secs(secs),
+            None => {
+                tracing::warn!(
+                    value,
+                    default_secs = REQUEST_TIMEOUT_SECS_DEFAULT,
+                    "REQUEST_TIMEOUT_SECS must be a positive integer; using default"
+                );
+                Duration::from_secs(REQUEST_TIMEOUT_SECS_DEFAULT)
+            }
+        },
+        Err(_) => Duration::from_secs(REQUEST_TIMEOUT_SECS_DEFAULT),
+    }
 }
 
 /// Read SSE keep-alive interval from environment, defaulting to 15 seconds.
@@ -540,12 +594,193 @@ mod tests {
             "/bounties",
             "/bounties/{id}",
             "/bounties/assignee/{address}",
+            "/admin/audit-logs",
+            "/leaderboard",
+            "/webhooks/subscriptions",
+            "/webhooks/subscriptions/{id}",
         ] {
             assert!(doc.paths.paths.contains_key(path), "missing {path}");
         }
         let schemas = doc.components.expect("components").schemas;
         assert!(schemas.contains_key("Bounty"));
         assert!(schemas.contains_key("AppError"));
+    }
+
+    #[test]
+    fn openapi_document_matches_snapshot() {
+        let document = serde_json::to_value(ApiDoc::openapi()).expect("OpenAPI serializes");
+        let mut paths = serde_json::Map::new();
+        for (path, item) in document["paths"].as_object().expect("paths object") {
+            let mut methods: Vec<_> = item
+                .as_object()
+                .expect("path item object")
+                .keys()
+                .cloned()
+                .collect();
+            methods.sort();
+            paths.insert(path.clone(), serde_json::json!(methods));
+        }
+
+        let mut schemas = serde_json::Map::new();
+        for (name, schema) in document["components"]["schemas"]
+            .as_object()
+            .expect("schemas object")
+        {
+            let mut fields: Vec<_> = schema["properties"]
+                .as_object()
+                .map(|properties| properties.keys().cloned().collect())
+                .unwrap_or_default();
+            fields.sort();
+            schemas.insert(
+                name.clone(),
+                serde_json::json!({
+                    "fields": fields,
+                    "enum": schema.get("enum").cloned().unwrap_or(serde_json::Value::Null)
+                }),
+            );
+        }
+        let actual = serde_json::json!({ "paths": paths, "schemas": schemas });
+        let expected: serde_json::Value =
+            serde_json::from_str(include_str!("../openapi.snapshot.json"))
+                .expect("OpenAPI snapshot must be valid JSON");
+        assert_eq!(
+            actual, expected,
+            "OpenAPI contract changed; review and update openapi.snapshot.json"
+        );
+    }
+
+    #[tokio::test]
+    async fn json_get_responses_match_documented_schemas() {
+        use crate::db::{acquire_db, add_webhook_subscription, Bounty};
+        use crate::test_helpers::validate_openapi_response;
+        use chrono::Utc;
+
+        let db = crate::db::new_shared_db();
+        let address = format!("G{}", "A".repeat(55));
+        acquire_db(&db).bounties.push(Bounty {
+            id: "bounty-1".to_string(),
+            creator: "creator".to_string(),
+            assignee: Some(address.clone()),
+            created_at: Utc::now(),
+            ..Default::default()
+        });
+        add_webhook_subscription(
+            &db,
+            "sub-1".to_string(),
+            "https://example.com/hook".to_string(),
+            "secret".to_string(),
+            vec!["*".to_string()],
+        );
+        let state = Arc::new(AppState {
+            db,
+            idempotency: new_shared_idempotency_store(),
+            rate_limiter: new_shared_rate_limiter(),
+            bounty_broadcast: tokio::sync::broadcast::channel(16).0,
+            leaderboard_cache: routes::leaderboard::new_leaderboard_cache(),
+            sse_keep_alive_duration: Duration::from_secs(15),
+        });
+        let app = Router::new()
+            .route("/admin/audit-logs", get(query_audit_logs))
+            .route("/bounties", get(list_bounties))
+            .route("/bounties/:id", get(get_bounty_route))
+            .route(
+                "/bounties/assignee/:address",
+                get(list_bounties_by_assignee),
+            )
+            .route("/leaderboard", get(get_leaderboard_route))
+            .route("/webhooks/subscriptions", get(list_subscriptions_route))
+            .route("/webhooks/subscriptions/:id", get(get_subscription_route))
+            .with_state(state);
+        let openapi = ApiDoc::openapi();
+        let assignee_uri = format!("/bounties/assignee/{address}");
+
+        for (uri, schema_path) in [
+            ("/admin/audit-logs", "/admin/audit-logs"),
+            ("/bounties", "/bounties"),
+            ("/bounties/bounty-1", "/bounties/{id}"),
+            (assignee_uri.as_str(), "/bounties/assignee/{address}"),
+            ("/leaderboard", "/leaderboard"),
+            ("/webhooks/subscriptions", "/webhooks/subscriptions"),
+            (
+                "/webhooks/subscriptions/sub-1",
+                "/webhooks/subscriptions/{id}",
+            ),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "GET {uri}");
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            validate_openapi_response(&openapi, schema_path, 200, &body)
+                .unwrap_or_else(|error| panic!("GET {uri} violates OpenAPI: {error}"));
+        }
+    }
+
+    #[tokio::test]
+    async fn timed_out_requests_return_typed_504_and_are_counted() {
+        let metrics = Arc::new(Metrics::new());
+        let app = Router::new()
+            .route(
+                "/slow",
+                get(|| async {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    "finished"
+                }),
+            )
+            .layer(middleware::from_fn_with_state(
+                RequestTimeout(Duration::from_millis(1)),
+                apply_request_timeout,
+            ))
+            .layer(middleware::from_fn_with_state(
+                metrics.clone(),
+                track_metrics,
+            ));
+
+        let response = app
+            .oneshot(Request::builder().uri("/slow").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::GATEWAY_TIMEOUT);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+            serde_json::json!({ "code": 504, "message": "request timed out" })
+        );
+        assert!(metrics.render().contains("status=\"504\""));
+    }
+
+    #[tokio::test]
+    async fn bounty_stream_path_is_excluded_from_request_timeout() {
+        let app = Router::new()
+            .route(
+                "/bounties/stream",
+                get(|| async {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    "stream established"
+                }),
+            )
+            .layer(middleware::from_fn_with_state(
+                RequestTimeout(Duration::from_millis(1)),
+                apply_request_timeout,
+            ));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/bounties/stream")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
     }
 
     #[tokio::test]

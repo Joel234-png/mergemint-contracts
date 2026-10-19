@@ -130,19 +130,14 @@ fn decode_cursor(cursor: &str) -> Option<(DateTime<Utc>, String)> {
 pub async fn list_bounties(
     State(state): State<Arc<AppState>>,
     Query(params): Query<ListParams>,
-) -> Result<Json<BountyPage>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<BountyPage>, (StatusCode, Json<crate::routes::tx::AppError>)> {
     if let Some(status) = params.status.as_deref() {
         if !VALID_STATUSES.contains(&status) {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": format!(
-                        "invalid status '{}'; expected one of: {}",
-                        status,
-                        VALID_STATUSES.join(", ")
-                    )
-                })),
-            ));
+            return Err(crate::routes::tx::AppError::bad_request(format!(
+                "invalid status '{}'; expected one of: {}",
+                status,
+                VALID_STATUSES.join(", ")
+            )));
         }
     }
 
@@ -152,9 +147,8 @@ pub async fn list_bounties(
         Some(raw) => match decode_cursor(raw) {
             Some(pair) => Some(pair),
             None => {
-                return Err((
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({ "error": "invalid page_cursor" })),
+                return Err(crate::routes::tx::AppError::bad_request(
+                    "invalid page_cursor",
                 ));
             }
         },
@@ -165,11 +159,8 @@ pub async fn list_bounties(
     let sort = params.sort.unwrap_or_default();
     let order = params.order.unwrap_or_default();
     if (decoded.is_some() || params.cursor.is_some()) && !cursor_supported(sort, order) {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "error": "cursor pagination is only supported with the default ordering (sort=created&order=desc)"
-            })),
+        return Err(crate::routes::tx::AppError::bad_request(
+            "cursor pagination is only supported with the default ordering (sort=created&order=desc)",
         ));
     }
 
@@ -229,13 +220,10 @@ pub async fn list_bounties_by_assignee(
     State(state): State<Arc<AppState>>,
     Path(address): Path<String>,
     Query(params): Query<ListParams>,
-) -> Result<Json<BountyPage>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<BountyPage>, (StatusCode, Json<crate::routes::tx::AppError>)> {
     if !is_syntactically_valid_address(&address) {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(
-                serde_json::json!({ "error": "assignee address is not a syntactically valid Stellar address" }),
-            ),
+        return Err(crate::routes::tx::AppError::bad_request(
+            "assignee address is not a syntactically valid Stellar address",
         ));
     }
 
@@ -243,11 +231,8 @@ pub async fn list_bounties_by_assignee(
     let sort = params.sort.unwrap_or_default();
     let order = params.order.unwrap_or_default();
     if params.cursor.is_some() && !cursor_supported(sort, order) {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "error": "cursor pagination is only supported with the default ordering (sort=created&order=desc)"
-            })),
+        return Err(crate::routes::tx::AppError::bad_request(
+            "cursor pagination is only supported with the default ordering (sort=created&order=desc)",
         ));
     }
     Ok(Json(db_list_bounties_by_assignee(
@@ -354,14 +339,11 @@ pub struct ClaimResponse {
 pub async fn get_bounty_route(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Result<Json<Bounty>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<Bounty>, (StatusCode, Json<crate::routes::tx::AppError>)> {
     if let Some(bounty) = crate::db::get_bounty(&state.db, &id) {
         Ok(Json(bounty))
     } else {
-        Err((
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": "bounty not found" })),
-        ))
+        Err(crate::routes::tx::AppError::not_found("bounty not found"))
     }
 }
 

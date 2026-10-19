@@ -308,6 +308,14 @@ pub async fn create_subscription_route(
 }
 
 /// Retrieve all registered webhook subscriptions.
+#[utoipa::path(
+    get,
+    path = "/webhooks/subscriptions",
+    responses(
+        (status = 200, description = "Registered webhook subscriptions", body = [WebhookSubscription]),
+    ),
+    tag = "webhooks"
+)]
 pub async fn list_subscriptions_route(
     State(state): State<Arc<AppState>>,
 ) -> Json<Vec<WebhookSubscription>> {
@@ -315,18 +323,25 @@ pub async fn list_subscriptions_route(
 }
 
 /// Retrieve a single webhook subscription by identifier.
+#[utoipa::path(
+    get,
+    path = "/webhooks/subscriptions/{id}",
+    params(("id" = String, Path, description = "Webhook subscription identifier")),
+    responses(
+        (status = 200, description = "Webhook subscription", body = WebhookSubscription),
+        (status = 404, description = "Subscription not found", body = crate::routes::tx::AppError),
+    ),
+    tag = "webhooks"
+)]
 pub async fn get_subscription_route(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Result<Json<WebhookSubscription>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<WebhookSubscription>, (StatusCode, Json<crate::routes::tx::AppError>)> {
     match get_webhook_subscription(&state.db, &id) {
         Some(sub) => Ok(Json(sub)),
-        None => Err((
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({
-                "error": format!("Webhook subscription '{id}' not found")
-            })),
-        )),
+        None => Err(crate::routes::tx::AppError::not_found(format!(
+            "webhook subscription '{id}' not found"
+        ))),
     }
 }
 

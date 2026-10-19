@@ -70,6 +70,16 @@ Before changing anything, check that the existing suite passes on your machine. 
 - If you change a `#[contracttype]` struct, read [Test Snapshots](#test-snapshots) and [docs/migration.md](docs/migration.md) first.
 - If you change the public contract interface, add a [`CHANGELOG.md`](#changelog) entry.
 
+### Backend OpenAPI snapshots
+
+The backend OpenAPI contract is summarized in
+`mergemint-backend/openapi.snapshot.json`. When an intentional API route or
+response-schema change updates the snapshot test, review the route methods and
+schema fields/enums in the diff, then update the JSON fixture in the same
+change. The backend test `openapi_document_matches_snapshot` reports drift;
+`json_get_responses_match_documented_schemas` checks live JSON GET responses
+against their generated OpenAPI schemas.
+
 ### 6. Commit
 
 Use [Conventional Commits](https://www.conventionalcommits.org/) style messages, matching the history of this repo:

@@ -12,13 +12,15 @@ use serde::Deserialize;
 use std::sync::Arc;
 use std::sync::RwLock;
 use std::time::{Duration, Instant};
+use utoipa::IntoParams;
 
 use crate::db::{get_leaderboard as db_get_leaderboard, LeaderboardPage};
 use crate::routes::tx::AppState;
 
 // ── Query params ──────────────────────────────────────────────────────────────
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct LeaderboardParams {
     pub limit: Option<i64>,
 }
@@ -56,6 +58,16 @@ pub fn new_leaderboard_cache() -> LeaderboardCache {
 ///
 /// Query parameters:
 /// - `limit`: Maximum number of entries to return (default: 20, max: 100)
+#[utoipa::path(
+    get,
+    path = "/leaderboard",
+    params(LeaderboardParams),
+    responses(
+        (status = 200, description = "Contributors ranked by reputation", body = LeaderboardPage),
+        (status = 500, description = "Internal server error", body = crate::routes::tx::AppError),
+    ),
+    tag = "leaderboard"
+)]
 pub async fn get_leaderboard_route(
     State(state): State<Arc<AppState>>,
     Query(params): Query<LeaderboardParams>,
