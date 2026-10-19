@@ -5,6 +5,7 @@ const es: Record<TranslationKey, string> = {
   nav_bounties: 'Recompensas',
   nav_create_bounty: 'Crear recompensa',
   nav_leaderboard: 'Tabla de clasificación',
+  nav_stats: 'Estadísticas',
 
   // BountyList
   filter_all: 'Todas',

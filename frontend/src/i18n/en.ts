@@ -3,6 +3,7 @@ const en = {
   nav_bounties: 'Bounties',
   nav_create_bounty: 'Create Bounty',
   nav_leaderboard: 'Leaderboard',
+  nav_stats: 'Stats',
 
   // BountyList
   filter_all: 'All',
