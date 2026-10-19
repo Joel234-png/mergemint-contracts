@@ -25,6 +25,8 @@ import {
   InvalidArgumentError,
   InvalidContractIdError,
   InvalidRpcUrlError,
+  ReopenNotAllowedError,
+  SubmissionNotFoundError,
   parseSimulationError,
 } from "./errors";
 import { onEvent, ContractEventType } from "./events";
@@ -365,6 +367,167 @@ describe("#920 — extendDeadline", () => {
     ).rejects.toBeInstanceOf(NotFoundError);
 
     expect(rpc.calls.simulateTransaction).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #1085: reopenBounty, reassignBounty, submitWork SDK methods
+// ---------------------------------------------------------------------------
+
+describe("#1085 — reopenBounty", () => {
+  it("rejects a non-integer deadline", async () => {
+    const sdk = sdkWithRpc(makeRpc());
+    await expect(
+      sdk.reopenBounty(
+        { creator: SOURCE_ACCOUNT, bountyId: BOUNTY_ID, newDeadline: 1.5 },
+        SOURCE_ACCOUNT
+      )
+    ).rejects.toThrow(/positive Unix timestamp/);
+  });
+
+  it("rejects a zero deadline", async () => {
+    const sdk = sdkWithRpc(makeRpc());
+    await expect(
+      sdk.reopenBounty(
+        { creator: SOURCE_ACCOUNT, bountyId: BOUNTY_ID, newDeadline: 0 },
+        SOURCE_ACCOUNT
+      )
+    ).rejects.toThrow(/positive Unix timestamp/);
+  });
+
+  it("throws MergeMintSdkError with INVALID_ARGUMENT for invalid deadline", async () => {
+    const sdk = sdkWithRpc(makeRpc());
+    try {
+      await sdk.reopenBounty(
+        { creator: SOURCE_ACCOUNT, bountyId: BOUNTY_ID, newDeadline: 0 },
+        SOURCE_ACCOUNT
+      );
+    } catch (err) {
+      expect(err).toBeInstanceOf(MergeMintSdkError);
+      expect((err as MergeMintSdkError).code).toBe("INVALID_ARGUMENT");
+    }
+  });
+
+  it("routes to the reopen_bounty contract method (simulateTransaction called)", async () => {
+    const rpc = makeRpc({ simulationError: "refund_reopen" });
+    const sdk = sdkWithRpc(rpc);
+
+    await expect(
+      sdk.reopenBounty(
+        { creator: SOURCE_ACCOUNT, bountyId: BOUNTY_ID, newDeadline: 9999999999 },
+        SOURCE_ACCOUNT
+      )
+    ).rejects.toBeInstanceOf(ReopenNotAllowedError);
+
+    expect(rpc.calls.simulateTransaction).toBe(1);
+  });
+});
+
+describe("#1085 — reassignBounty", () => {
+  it("rejects an empty newAssignee address", async () => {
+    const sdk = sdkWithRpc(makeRpc());
+    await expect(
+      sdk.reassignBounty(
+        { creator: SOURCE_ACCOUNT, bountyId: BOUNTY_ID, newAssignee: "" },
+        SOURCE_ACCOUNT
+      )
+    ).rejects.toThrow(/newAssignee must be a non-empty address/);
+  });
+
+  it("throws MergeMintSdkError with INVALID_ARGUMENT for empty address", async () => {
+    const sdk = sdkWithRpc(makeRpc());
+    try {
+      await sdk.reassignBounty(
+        { creator: SOURCE_ACCOUNT, bountyId: BOUNTY_ID, newAssignee: "   " },
+        SOURCE_ACCOUNT
+      );
+    } catch (err) {
+      expect(err).toBeInstanceOf(MergeMintSdkError);
+      expect((err as MergeMintSdkError).code).toBe("INVALID_ARGUMENT");
+    }
+  });
+
+  it("routes to the reassign_bounty contract method (simulateTransaction called)", async () => {
+    const rpc = makeRpc({ simulationError: "assignee not found" });
+    const sdk = sdkWithRpc(rpc);
+
+    await expect(
+      sdk.reassignBounty(
+        { creator: SOURCE_ACCOUNT, bountyId: BOUNTY_ID, newAssignee: SOURCE_ACCOUNT },
+        SOURCE_ACCOUNT
+      )
+    ).rejects.toBeInstanceOf(NotFoundError);
+
+    expect(rpc.calls.simulateTransaction).toBe(1);
+  });
+});
+
+describe("#1085 — submitWork", () => {
+  it("rejects an empty submission note", async () => {
+    const sdk = sdkWithRpc(makeRpc());
+    await expect(
+      sdk.submitWork(
+        { assignee: SOURCE_ACCOUNT, bountyId: BOUNTY_ID, submission: "" },
+        SOURCE_ACCOUNT
+      )
+    ).rejects.toThrow(/submission must be a non-empty/);
+  });
+
+  it("rejects a submission exceeding the 32-character Symbol limit", async () => {
+    const sdk = sdkWithRpc(makeRpc());
+    await expect(
+      sdk.submitWork(
+        { assignee: SOURCE_ACCOUNT, bountyId: BOUNTY_ID, submission: "a".repeat(33) },
+        SOURCE_ACCOUNT
+      )
+    ).rejects.toThrow(/32-character Symbol limit/);
+  });
+
+  it("routes to the submit_work contract method (simulateTransaction called)", async () => {
+    const rpc = makeRpc({ simulationError: "submission not found" });
+    const sdk = sdkWithRpc(rpc);
+
+    await expect(
+      sdk.submitWork(
+        { assignee: SOURCE_ACCOUNT, bountyId: BOUNTY_ID, submission: "done" },
+        SOURCE_ACCOUNT
+      )
+    ).rejects.toBeInstanceOf(NotFoundError);
+
+    expect(rpc.calls.simulateTransaction).toBe(1);
+  });
+
+  it("throws MergeMintSdkError with INVALID_ARGUMENT for max-length violation", async () => {
+    const sdk = sdkWithRpc(makeRpc());
+    try {
+      await sdk.submitWork(
+        { assignee: SOURCE_ACCOUNT, bountyId: BOUNTY_ID, submission: "b".repeat(40) },
+        SOURCE_ACCOUNT
+      );
+    } catch (err) {
+      expect(err).toBeInstanceOf(MergeMintSdkError);
+      expect((err as MergeMintSdkError).code).toBe("INVALID_ARGUMENT");
+    }
+  });
+});
+
+describe("#1085 — parseSimulationError new patterns", () => {
+  it("maps 'refund_reopen' to ReopenNotAllowedError", () => {
+    expect(parseSimulationError("Error(Contract, #99): refund_reopen")).toBeInstanceOf(
+      ReopenNotAllowedError
+    );
+  });
+
+  it("maps 'submission not found' to NotFoundError", () => {
+    expect(parseSimulationError("Error(Contract, #16): submission not found")).toBeInstanceOf(
+      NotFoundError
+    );
+  });
+
+  it("exposes SubmissionNotFoundError carrying the NOT_FOUND code", () => {
+    const err = new SubmissionNotFoundError("submission not found");
+    expect(err).toBeInstanceOf(ContractError);
+    expect((err as MergeMintSdkError).code).toBe("NOT_FOUND");
   });
 });
 
