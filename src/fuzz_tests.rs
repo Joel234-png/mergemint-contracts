@@ -942,6 +942,9 @@ fn test_fuzz_create_bounty_10k_cases() {
         }
     }
 
+}
+
+proptest! {
     /// Property test: after any sequence of mutations, `get_status_count` for
     /// every status must equal a full scan of the stored bounties' statuses.
     ///

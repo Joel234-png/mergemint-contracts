@@ -446,11 +446,18 @@ pub fn remove_bounty_from_status(env: &Env, bounty_id: &BountyId, status: &Symbo
         }
         set_status_page(env, status, fp, &new_target);
 
-        // Shrink the last page.
+        // Shrink the last page. When the target sat on the last page itself,
+        // shrink the freshly written copy, not the stale `last_page` read
+        // from before the swap (which would resurrect the removed id).
+        let source = if fp == last_page_idx {
+            new_target
+        } else {
+            last_page
+        };
         let mut trimmed: Vec<BountyId> = Vec::new(env);
         let mut i = 0u32;
-        while i < last_page.len() - 1 {
-            trimmed.push_back(last_page.get(i).unwrap());
+        while i < source.len() - 1 {
+            trimmed.push_back(source.get(i).unwrap());
             i += 1;
         }
         set_status_page(env, status, last_page_idx, &trimmed);
