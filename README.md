@@ -156,3 +156,6 @@ contract, read [docs/security.md](docs/security.md) first.
 
 <!-- handsoff-issue-869 -->
 - #869: [Backend] Request ID middleware
+
+<!-- handsoff-issue-1058 -->
+- #1058: [Frontend] Sync bounty filters with URL query params
