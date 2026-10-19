@@ -6,7 +6,9 @@ use crate::errors;
 use crate::errors::{fail, ContractError};
 use crate::events;
 use crate::storage;
-use crate::types::{Bounty, BountyId, BountyMeta, BountySummary, Contributor, Milestone};
+use crate::types::{
+    Bounty, BountyId, BountyMeta, BountySummary, Contributor, Milestone, PendingResolution,
+};
 
 #[contract]
 pub struct MergeMintContract;

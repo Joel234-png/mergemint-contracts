@@ -190,6 +190,7 @@ fn complete_bounty_inner(env: Env, bounty_id: BountyId, mut bounty: Bounty) {
         bounty.status = Symbol::new(&env, STATUS_COMPLETED);
         storage::store_bounty(&env, &bounty_id, &bounty);
         storage::move_bounty_status(&env, &bounty_id, &previous_status, &bounty.status);
+        storage::decrement_creator_open_count(&env, &bounty.creator);
         events::emit_bounty_completed(&env, &bounty_id, &primary_assignee);
         return;
     }
@@ -199,6 +200,7 @@ fn complete_bounty_inner(env: Env, bounty_id: BountyId, mut bounty: Bounty) {
     bounty.status = Symbol::new(&env, STATUS_COMPLETED);
     storage::store_bounty(&env, &bounty_id, &bounty);
     storage::move_bounty_status(&env, &bounty_id, &previous_status, &bounty.status);
+    storage::decrement_creator_open_count(&env, &bounty.creator);
 
     let token = TokenClient::new(&env, &bounty.reward_token);
     distribute_payout(
@@ -211,6 +213,75 @@ fn complete_bounty_inner(env: Env, bounty_id: BountyId, mut bounty: Bounty) {
     );
 
     events::emit_bounty_completed(&env, &bounty_id, &primary_assignee);
+}
+
+/// Apply a dispute decision (`"complete"` pays out assignees, `"cancel"`
+/// refunds the creator), mutate the bounty to its terminal status, and emit
+/// `dispute_resolved`.
+///
+/// Shared by `resolve_dispute` (immediate path, when no appeal window is
+/// configured) and `finalize_dispute` (deferred path, after the appeal
+/// window has passed without an appeal).
+fn apply_dispute_resolution(
+    env: Env,
+    bounty_id: BountyId,
+    mut bounty: Bounty,
+    arbitrator: Address,
+    resolution: Symbol,
+) {
+    let resolve_complete = Symbol::new(&env, "complete");
+
+    if resolution == resolve_complete {
+        if bounty.assignees.is_empty() {
+            fail(ContractError::BountyHasNoAssignee);
+        }
+
+        if !bounty.milestones.is_empty() {
+            if !bounty.milestones.iter().all(|m| m.completed) {
+                fail(ContractError::NotAllMilestonesCompleted);
+            }
+            let previous_status = bounty.status.clone();
+            bounty.status = Symbol::new(&env, STATUS_COMPLETED);
+            storage::store_bounty(&env, &bounty_id, &bounty);
+            storage::move_bounty_status(&env, &bounty_id, &previous_status, &bounty.status);
+        } else {
+            let token = TokenClient::new(&env, &bounty.reward_token);
+
+            for (assignee, share_bp) in bounty.assignees.iter() {
+                let payout = bounty.reward_amount * (share_bp as i128) / 10_000_i128;
+                token.transfer(&arbitrator, &assignee, &payout);
+
+                let mut contrib = storage::get_contributor(&env, &assignee)
+                    .unwrap_or_else(|| Contributor::new(assignee.clone()));
+
+                set_reputation(&env, &mut contrib, &assignee, 10, "completion");
+                contrib.total_earned += payout;
+                contrib.contribution_count += 1;
+                decrement_active_claims(&mut contrib);
+
+                storage::store_contributor(&env, &assignee, &contrib);
+                events::emit_reward_paid(&env, &bounty_id, &assignee, &payout);
+            }
+
+            let previous_status = bounty.status.clone();
+            bounty.status = Symbol::new(&env, STATUS_COMPLETED);
+            storage::store_bounty(&env, &bounty_id, &bounty);
+            storage::move_bounty_status(&env, &bounty_id, &previous_status, &bounty.status);
+        }
+    } else {
+        // validate_symbol (at decision time) already guarantees resolution is
+        // "complete" or "cancel" — this branch handles "cancel".
+        // Refund escrowed reward pro rata: sponsors get their contribution
+        // back, the creator gets the remainder.
+        refund_escrow(&env, &bounty_id, &bounty);
+
+        let previous_status = bounty.status.clone();
+        bounty.status = Symbol::new(&env, STATUS_CANCELLED);
+        storage::store_bounty(&env, &bounty_id, &bounty);
+        storage::move_bounty_status(&env, &bounty_id, &previous_status, &bounty.status);
+    }
+
+    events::emit_dispute_resolved(&env, &bounty_id, &arbitrator, &resolution);
 }
 
 #[contractimpl]
@@ -312,6 +383,11 @@ impl MergeMintContract {
 
         creator.require_auth();
 
+        let limit = storage::get_creator_open_limit(&env);
+        if limit > 0 && storage::get_creator_open_count(&env, &creator) >= limit {
+            fail(ContractError::CreatorLimitReached);
+        }
+
         let count = storage::get_bounty_count(&env);
         let id = generate_bounty_id(&env, count);
 
@@ -337,6 +413,7 @@ impl MergeMintContract {
         storage::append_creator_bounty(&env, &creator, &id);
         storage::add_open_bounty(&env, &id);
         storage::append_token_bounty(&env, &bounty.reward_token, &id);
+        storage::increment_creator_open_count(&env, &creator);
 
         events::emit_bounty_created(&env, &id, &creator, &reward_amount);
         id
@@ -401,6 +478,15 @@ impl MergeMintContract {
             fail(ContractError::BountyAlreadyAssigned);
         }
 
+        // Claim cooldown: block a re-claim by the same contributor within
+        // `claim_cooldown` ledgers of their own unclaim on this bounty.
+        if let Some(unclaimed_at) = storage::get_unclaimed_at(&env, &bounty_id, &contributor) {
+            let cooldown = storage::get_claim_cooldown(&env);
+            if cooldown > 0 && env.ledger().sequence() < unclaimed_at + cooldown {
+                fail(ContractError::ClaimCooldownActive);
+            }
+        }
+
         // #275: use Contributor::new for default construction (DONE - all call sites updated)
         let mut contrib = storage::get_contributor(&env, &contributor)
             .unwrap_or_else(|| Contributor::new(contributor.clone()));
@@ -443,6 +529,61 @@ impl MergeMintContract {
         storage::remove_open_bounty(&env, &bounty_id);
 
         events::emit_bounty_claimed(&env, &bounty_id, &contributor);
+    }
+
+    /// Relinquish a claim on a bounty the caller is currently assigned to.
+    ///
+    /// Removes the contributor from the bounty's assignee list and decrements
+    /// their active-claims counter. If this was the only assignee, the bounty
+    /// reverts to `"open"` status and is re-listed in the open-bounties index.
+    /// A cooldown (configurable via `set_claim_cooldown`) is recorded so the
+    /// same contributor cannot immediately re-claim the bounty.
+    ///
+    /// # Panics
+    /// * If `bounty_id` does not exist.
+    /// * If the caller is not currently an assignee on this bounty.
+    ///
+    /// # Authorization
+    /// Requires auth from `contributor`.
+    pub fn unclaim_bounty(env: Env, contributor: Address, bounty_id: BountyId) {
+        contributor.require_auth();
+
+        let mut bounty = match storage::get_bounty(&env, &bounty_id) {
+            Some(b) => b,
+            None => fail(ContractError::BountyNotFound),
+        };
+
+        let is_assignee = bounty.assignees.iter().any(|(addr, _)| addr == contributor);
+        if !is_assignee {
+            fail(ContractError::NotAssignee);
+        }
+
+        let mut remaining: Vec<(Address, u32)> = Vec::new(&env);
+        for (addr, share) in bounty.assignees.iter() {
+            if addr != contributor {
+                remaining.push_back((addr, share));
+            }
+        }
+        bounty.assignees = remaining;
+
+        let mut contrib = storage::get_contributor(&env, &contributor)
+            .unwrap_or_else(|| Contributor::new(contributor.clone()));
+        decrement_active_claims(&mut contrib);
+        storage::store_contributor(&env, &contributor, &contrib);
+
+        if bounty.assignees.is_empty() {
+            let previous_status = bounty.status.clone();
+            bounty.status = Symbol::new(&env, STATUS_OPEN);
+            storage::store_bounty(&env, &bounty_id, &bounty);
+            storage::move_bounty_status(&env, &bounty_id, &previous_status, &bounty.status);
+            storage::add_open_bounty(&env, &bounty_id);
+        } else {
+            storage::store_bounty(&env, &bounty_id, &bounty);
+        }
+
+        storage::record_unclaim(&env, &bounty_id, &contributor);
+
+        events::emit_bounty_unclaimed(&env, &bounty_id, &contributor);
     }
 
     /// Complete a single milestone and pay out its reward.
@@ -665,6 +806,7 @@ impl MergeMintContract {
                 bounty.status = Symbol::new(&env, STATUS_COMPLETED);
                 storage::store_bounty(&env, &bounty_id, &bounty);
                 storage::move_bounty_status(&env, &bounty_id, &previous_status, &bounty.status);
+                storage::decrement_creator_open_count(&env, &bounty.creator);
                 let (primary_assignee, _) = bounty.assignees.get(0).unwrap();
                 events::emit_bounty_completed(&env, &bounty_id, &primary_assignee);
                 return;
@@ -685,6 +827,7 @@ impl MergeMintContract {
             bounty.status = Symbol::new(&env, STATUS_COMPLETED);
             storage::store_bounty(&env, &bounty_id, &bounty);
             storage::move_bounty_status(&env, &bounty_id, &previous_status, &bounty.status);
+            storage::decrement_creator_open_count(&env, &bounty.creator);
             events::emit_bounty_completed(&env, &bounty_id, &primary_assignee);
         }
     }
@@ -724,6 +867,7 @@ impl MergeMintContract {
         bounty.status = Symbol::new(&env, STATUS_DISPUTED);
         storage::store_bounty(&env, &bounty_id, &bounty);
         storage::move_bounty_status(&env, &bounty_id, &previous_status, &bounty.status);
+        storage::decrement_creator_open_count(&env, &bounty.creator);
         events::emit_bounty_disputed(&env, &bounty_id, &caller);
     }
 
@@ -740,7 +884,7 @@ impl MergeMintContract {
     pub fn resolve_dispute(env: Env, arbitrator: Address, bounty_id: BountyId, resolution: Symbol) {
         arbitrator.require_auth();
 
-        let mut bounty = match storage::get_bounty(&env, &bounty_id) {
+        let bounty = match storage::get_bounty(&env, &bounty_id) {
             Some(b) => b,
             None => fail(ContractError::BountyNotFound),
         };
@@ -765,59 +909,183 @@ impl MergeMintContract {
             fail(ContractError::ReputationTooLow);
         }
 
-        let resolve_complete = Symbol::new(&env, "complete");
-
-        if resolution == resolve_complete {
-            if bounty.assignees.is_empty() {
-                fail(ContractError::BountyHasNoAssignee);
-            }
-
-            if !bounty.milestones.is_empty() {
-                if !bounty.milestones.iter().all(|m| m.completed) {
-                    fail(ContractError::NotAllMilestonesCompleted);
-                }
-                let previous_status = bounty.status.clone();
-                bounty.status = Symbol::new(&env, STATUS_COMPLETED);
-                storage::store_bounty(&env, &bounty_id, &bounty);
-                storage::move_bounty_status(&env, &bounty_id, &previous_status, &bounty.status);
-            } else {
-                let token = TokenClient::new(&env, &bounty.reward_token);
-
-                for (assignee, share_bp) in bounty.assignees.iter() {
-                    let payout = bounty.reward_amount * (share_bp as i128) / 10_000_i128;
-                    token.transfer(&arbitrator, &assignee, &payout);
-
-                    let mut contrib = storage::get_contributor(&env, &assignee)
-                        .unwrap_or_else(|| Contributor::new(assignee.clone()));
-
-                    set_reputation(&env, &mut contrib, &assignee, 10, "completion");
-                    contrib.total_earned += payout;
-                    contrib.contribution_count += 1;
-                    decrement_active_claims(&mut contrib);
-
-                    storage::store_contributor(&env, &assignee, &contrib);
-                    events::emit_reward_paid(&env, &bounty_id, &assignee, &payout);
-                }
-
-                let previous_status = bounty.status.clone();
-                bounty.status = Symbol::new(&env, STATUS_COMPLETED);
-                storage::store_bounty(&env, &bounty_id, &bounty);
-                storage::move_bounty_status(&env, &bounty_id, &previous_status, &bounty.status);
-            }
+        let window = storage::get_appeal_window(&env);
+        if window == 0 {
+            // No appeal window configured: preserve the original immediate
+            // behaviour.
+            apply_dispute_resolution(env, bounty_id, bounty, arbitrator, resolution);
         } else {
-            // validate_symbol above already guarantees resolution is "complete" or
-            // "cancel" — this branch handles "cancel".
-            // Refund escrowed reward pro rata: sponsors get their contribution
-            // back, the creator gets the remainder.
-            refund_escrow(&env, &bounty_id, &bounty);
+            // Record the decision; funds stay escrowed until `finalize_dispute`
+            // (after the window passes) or an `appeal_dispute` call blocks it.
+            let decided_at = env.ledger().sequence();
+            storage::set_pending_resolution(
+                &env,
+                &bounty_id,
+                &PendingResolution {
+                    arbitrator,
+                    resolution,
+                    decided_at,
+                },
+            );
+        }
+    }
 
-            let previous_status = bounty.status.clone();
-            bounty.status = Symbol::new(&env, STATUS_CANCELLED);
-            storage::store_bounty(&env, &bounty_id, &bounty);
-            storage::move_bounty_status(&env, &bounty_id, &previous_status, &bounty.status);
+    /// Finalize a previously-decided dispute once its appeal window has
+    /// passed without an appeal, executing the payout/refund and transitioning
+    /// the bounty to its terminal status.
+    ///
+    /// # Panics
+    /// * If `bounty_id` does not exist.
+    /// * If there is no pending resolution for this bounty.
+    /// * If the appeal window has not yet passed.
+    ///
+    /// # Authorization
+    /// Requires auth from `caller` (any authenticated address may finalize).
+    pub fn finalize_dispute(env: Env, caller: Address, bounty_id: BountyId) {
+        caller.require_auth();
+
+        let bounty = match storage::get_bounty(&env, &bounty_id) {
+            Some(b) => b,
+            None => fail(ContractError::BountyNotFound),
+        };
+
+        let pending = match storage::get_pending_resolution(&env, &bounty_id) {
+            Some(p) => p,
+            None => fail(ContractError::NoPendingResolution),
+        };
+
+        let window = storage::get_appeal_window(&env);
+        if env.ledger().sequence() < pending.decided_at + window {
+            fail(ContractError::FinalizeTooEarly);
         }
 
-        events::emit_dispute_resolved(&env, &bounty_id, &arbitrator, &resolution);
+        storage::remove_pending_resolution(&env, &bounty_id);
+        let arbitrator = pending.arbitrator.clone();
+        apply_dispute_resolution(
+            env.clone(),
+            bounty_id.clone(),
+            bounty,
+            pending.arbitrator,
+            pending.resolution,
+        );
+        events::emit_dispute_finalized(&env, &bounty_id, &arbitrator);
+    }
+
+    /// Escalate a pending dispute decision within its appeal window, keeping
+    /// funds escrowed. Only one appeal is permitted per dispute; the
+    /// arbitrator may call `resolve_dispute` again with a fresh decision,
+    /// which must then run to completion (a second appeal is rejected).
+    ///
+    /// # Panics
+    /// * If `bounty_id` does not exist.
+    /// * If there is no pending resolution for this bounty.
+    /// * If `caller` is neither the creator nor an assignee.
+    /// * If this dispute has already been appealed once.
+    /// * If the appeal window has already closed.
+    ///
+    /// # Authorization
+    /// Requires auth from `caller`.
+    pub fn appeal_dispute(env: Env, caller: Address, bounty_id: BountyId) {
+        caller.require_auth();
+
+        let bounty = match storage::get_bounty(&env, &bounty_id) {
+            Some(b) => b,
+            None => fail(ContractError::BountyNotFound),
+        };
+
+        let pending = match storage::get_pending_resolution(&env, &bounty_id) {
+            Some(p) => p,
+            None => fail(ContractError::NoPendingResolution),
+        };
+
+        let is_assignee = bounty.assignees.iter().any(|(addr, _)| addr == caller);
+        if caller != bounty.creator && !is_assignee {
+            fail(ContractError::OnlyCreatorOrAssigneeCanDispute);
+        }
+
+        if storage::get_dispute_appealed(&env, &bounty_id) {
+            fail(ContractError::AlreadyAppealed);
+        }
+
+        let window = storage::get_appeal_window(&env);
+        if env.ledger().sequence() >= pending.decided_at + window {
+            fail(ContractError::AppealWindowClosed);
+        }
+
+        storage::remove_pending_resolution(&env, &bounty_id);
+        storage::set_dispute_appealed(&env, &bounty_id);
+
+        events::emit_dispute_appealed(&env, &bounty_id, &caller);
+    }
+
+    /// Set the admin-configurable appeal window, in ledgers, that follows a
+    /// dispute decision before it can be finalized. A value of `0` keeps the
+    /// original immediate-payout behaviour (the default).
+    ///
+    /// Uses the same lazily-established admin as the other admin entrypoints.
+    ///
+    /// # Authorization
+    /// Requires auth from `caller`. Restricted to the contract admin once one
+    /// has been established.
+    pub fn set_appeal_window(env: Env, caller: Address, ledgers: u32) {
+        caller.require_auth();
+
+        match storage::get_admin(&env) {
+            Some(admin) => {
+                if caller != admin {
+                    fail(ContractError::NotAdmin);
+                }
+            }
+            None => storage::set_admin(&env, &caller),
+        }
+
+        storage::set_appeal_window(&env, ledgers);
+    }
+
+    /// Attach an evidence hash to an open dispute.
+    ///
+    /// Only the bounty creator or an assignee may call this. Evidence can no
+    /// longer be added once the dispute has been resolved (status is no
+    /// longer `"disputed"`), and at most `storage::MAX_DISPUTE_EVIDENCE`
+    /// entries are retained per dispute.
+    ///
+    /// # Arguments
+    /// * `caller` - The creator or an assignee of the disputed bounty.
+    /// * `bounty_id` - The disputed bounty.
+    /// * `hash` - A 32-byte hash referencing off-chain evidence.
+    ///
+    /// # Panics
+    /// * If `bounty_id` does not exist.
+    /// * If the bounty is not currently in `"disputed"` status.
+    /// * If `caller` is neither the creator nor an assignee.
+    /// * If the evidence cap has already been reached.
+    ///
+    /// # Authorization
+    /// Requires auth from `caller`.
+    pub fn add_dispute_evidence(env: Env, caller: Address, bounty_id: BountyId, hash: BytesN<32>) {
+        caller.require_auth();
+
+        let bounty = match storage::get_bounty(&env, &bounty_id) {
+            Some(b) => b,
+            None => fail(ContractError::BountyNotFound),
+        };
+
+        if bounty.status != Symbol::new(&env, STATUS_DISPUTED) {
+            fail(ContractError::DisputeAlreadyResolved);
+        }
+
+        let is_assignee = bounty.assignees.iter().any(|(addr, _)| addr == caller);
+        if caller != bounty.creator && !is_assignee {
+            fail(ContractError::OnlyPartyCanAddEvidence);
+        }
+
+        let existing = storage::get_dispute_evidence(&env, &bounty_id);
+        if existing.len() >= storage::MAX_DISPUTE_EVIDENCE {
+            fail(ContractError::EvidenceLimitReached);
+        }
+
+        storage::append_dispute_evidence(&env, &bounty_id, &hash);
+        events::emit_dispute_evidence_added(&env, &bounty_id, &caller, &hash);
     }
 
     /// Update the on-chain metadata URI for a contributor profile.
@@ -898,6 +1166,7 @@ impl MergeMintContract {
         bounty.status = Symbol::new(&env, STATUS_CANCELLED);
         storage::store_bounty(&env, &bounty_id, &bounty);
         storage::move_bounty_status(&env, &bounty_id, &previous_status, &bounty.status);
+        storage::decrement_creator_open_count(&env, &bounty.creator);
 
         events::emit_bounty_cancelled(&env, &bounty_id, &caller);
     }
@@ -950,6 +1219,7 @@ impl MergeMintContract {
         bounty.status = Symbol::new(&env, STATUS_CANCELLED);
         storage::store_bounty(&env, &bounty_id, &bounty);
         storage::move_bounty_status(&env, &bounty_id, &previous_status, &bounty.status);
+        storage::decrement_creator_open_count(&env, &bounty.creator);
 
         events::emit_bounty_expired(&env, &bounty_id, &bounty.creator);
     }
@@ -1201,6 +1471,54 @@ impl MergeMintContract {
         storage::store_bounty(&env, &bounty_id, &bounty);
 
         events::emit_deadline_extended(&env, &bounty_id, &creator, new_deadline);
+    }
+
+    /// Set the admin-configurable cap on concurrent open+claimed bounties
+    /// per creator. A `limit` of `0` disables the cap (unlimited, the default).
+    ///
+    /// The first address to call any admin-only entrypoint becomes the
+    /// contract admin; subsequent calls are restricted to that address.
+    ///
+    /// # Authorization
+    /// Requires auth from `caller`. Restricted to the contract admin once one
+    /// has been established.
+    pub fn set_creator_open_limit(env: Env, caller: Address, limit: u32) {
+        caller.require_auth();
+
+        match storage::get_admin(&env) {
+            Some(admin) => {
+                if caller != admin {
+                    fail(ContractError::NotAdmin);
+                }
+            }
+            None => storage::set_admin(&env, &caller),
+        }
+
+        storage::set_creator_open_limit(&env, limit);
+    }
+
+    /// Set the admin-configurable claim cooldown (in ledgers) that a
+    /// contributor must wait after unclaiming a bounty before re-claiming it.
+    /// A value of `0` disables the cooldown (the default).
+    ///
+    /// Uses the same lazily-established admin as `set_creator_open_limit`.
+    ///
+    /// # Authorization
+    /// Requires auth from `caller`. Restricted to the contract admin once one
+    /// has been established.
+    pub fn set_claim_cooldown(env: Env, caller: Address, ledgers: u32) {
+        caller.require_auth();
+
+        match storage::get_admin(&env) {
+            Some(admin) => {
+                if caller != admin {
+                    fail(ContractError::NotAdmin);
+                }
+            }
+            None => storage::set_admin(&env, &caller),
+        }
+
+        storage::set_claim_cooldown(&env, ledgers);
     }
 
     /// Reopen an expired bounty with a new deadline.

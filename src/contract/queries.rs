@@ -330,4 +330,53 @@ impl MergeMintContract {
         let all = storage::get_token_bounties(&env, &token);
         paginate(&env, all, cursor, limit)
     }
+
+    /// Return the admin-configured cap on concurrent open+claimed bounties
+    /// per creator. `0` means unlimited (the default).
+    pub fn get_creator_open_limit(env: Env) -> u32 {
+        storage::get_creator_open_limit(&env)
+    }
+
+    /// Return the current count of open+claimed bounties for `creator`.
+    pub fn get_creator_open_count(env: Env, creator: Address) -> u32 {
+        storage::get_creator_open_count(&env, &creator)
+    }
+
+    /// Return the admin-configured claim cooldown, in ledgers. `0` means the
+    /// cooldown is disabled (the default).
+    pub fn get_claim_cooldown(env: Env) -> u32 {
+        storage::get_claim_cooldown(&env)
+    }
+
+    /// Return contract-wide configuration values in a single call:
+    /// `(creator_open_limit, claim_cooldown)`.
+    pub fn get_config(env: Env) -> (u32, u32) {
+        (
+            storage::get_creator_open_limit(&env),
+            storage::get_claim_cooldown(&env),
+        )
+    }
+
+    /// Return the evidence hashes attached to `bounty_id`'s dispute, if any.
+    pub fn get_dispute_evidence(env: Env, bounty_id: BountyId) -> Vec<soroban_sdk::BytesN<32>> {
+        storage::get_dispute_evidence(&env, &bounty_id)
+    }
+
+    /// Return the admin-configured dispute appeal window, in ledgers. `0`
+    /// means decisions are paid out immediately (the default).
+    pub fn get_appeal_window(env: Env) -> u32 {
+        storage::get_appeal_window(&env)
+    }
+
+    /// Return the pending (undecided-until-finalized) dispute resolution for
+    /// `bounty_id`, if one has been recorded.
+    pub fn get_pending_resolution(env: Env, bounty_id: BountyId) -> Option<PendingResolution> {
+        storage::get_pending_resolution(&env, &bounty_id)
+    }
+
+    /// Return whether `bounty_id`'s dispute has already used its one
+    /// allowed appeal.
+    pub fn get_dispute_appealed(env: Env, bounty_id: BountyId) -> bool {
+        storage::get_dispute_appealed(&env, &bounty_id)
+    }
 }

@@ -41,7 +41,9 @@
 //! append and swap-remove semantics.
 use soroban_sdk::{Address, Env, Symbol, Vec};
 
-use crate::types::{Bounty, BountyId, BountyMeta, BountySummary, Contributor, DataKey};
+use crate::types::{
+    Bounty, BountyId, BountyMeta, BountySummary, Contributor, DataKey, PendingResolution,
+};
 
 /// Terminal statuses after which a bounty is recorded in a contributor's
 /// history index. Kept in sync with the status literals in `contract/mutations.rs`.
@@ -797,5 +799,185 @@ fn append_contributor_history(env: &Env, address: &Address, bounty_id: &BountyId
     list.push_back(bounty_id.clone());
     let key = DataKey::ContributorHistory(address.clone());
     env.storage().persistent().set(&key, &list);
+    extend(env, &key);
+}
+
+// ── Admin ─────────────────────────────────────────────────────────────────────
+
+/// Returns the contract admin, if one has been set.
+pub fn get_admin(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::Admin)
+}
+
+/// Persist the contract admin address.
+pub fn set_admin(env: &Env, admin: &Address) {
+    env.storage().instance().set(&DataKey::Admin, admin);
+}
+
+// ── Creator open-bounty cap ───────────────────────────────────────────────────
+
+/// Returns the configured cap on concurrent open+claimed bounties per
+/// creator. `0` means unlimited (the default when never configured).
+pub fn get_creator_open_limit(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::CreatorOpenLimit)
+        .unwrap_or(0)
+}
+
+/// Configure the per-creator open-bounty cap. `0` disables the cap.
+pub fn set_creator_open_limit(env: &Env, limit: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::CreatorOpenLimit, &limit);
+}
+
+/// Returns the current count of open+claimed bounties for `creator`.
+pub fn get_creator_open_count(env: &Env, creator: &Address) -> u32 {
+    let key = DataKey::CreatorOpenCount(creator.clone());
+    let count: Option<u32> = env.storage().persistent().get(&key);
+    if count.is_some() {
+        extend(env, &key);
+    }
+    count.unwrap_or(0)
+}
+
+fn set_creator_open_count(env: &Env, creator: &Address, count: u32) {
+    let key = DataKey::CreatorOpenCount(creator.clone());
+    env.storage().persistent().set(&key, &count);
+    extend(env, &key);
+}
+
+/// Increment `creator`'s open+claimed bounty counter by one.
+pub fn increment_creator_open_count(env: &Env, creator: &Address) {
+    let current = get_creator_open_count(env, creator);
+    set_creator_open_count(env, creator, current + 1);
+}
+
+/// Decrement `creator`'s open+claimed bounty counter by one, saturating at
+/// zero so the counter can never go negative.
+pub fn decrement_creator_open_count(env: &Env, creator: &Address) {
+    let current = get_creator_open_count(env, creator);
+    if current > 0 {
+        set_creator_open_count(env, creator, current - 1);
+    }
+}
+
+// ── Claim cooldown ────────────────────────────────────────────────────────────
+
+/// Returns the configured claim cooldown, in ledgers. `0` disables it
+/// (the default).
+pub fn get_claim_cooldown(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::ClaimCooldown)
+        .unwrap_or(0)
+}
+
+/// Configure the claim cooldown, in ledgers. `0` disables it.
+pub fn set_claim_cooldown(env: &Env, ledgers: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::ClaimCooldown, &ledgers);
+}
+
+/// Record that `contributor` unclaimed `bounty_id` at the current ledger
+/// sequence. Stored in **temporary** storage with a TTL equal to the
+/// configured cooldown (or a minimum of one ledger) so the entry expires on
+/// its own once the cooldown has elapsed.
+pub fn record_unclaim(env: &Env, bounty_id: &BountyId, contributor: &Address) {
+    let key = DataKey::UnclaimedAt(bounty_id.clone(), contributor.clone());
+    let now = env.ledger().sequence();
+    env.storage().temporary().set(&key, &now);
+    let ttl = get_claim_cooldown(env).max(1);
+    env.storage().temporary().extend_ttl(&key, ttl, ttl);
+}
+
+/// Returns the ledger sequence at which `contributor` last unclaimed
+/// `bounty_id`, if that record hasn't expired yet.
+pub fn get_unclaimed_at(env: &Env, bounty_id: &BountyId, contributor: &Address) -> Option<u32> {
+    let key = DataKey::UnclaimedAt(bounty_id.clone(), contributor.clone());
+    env.storage().temporary().get(&key)
+}
+
+// ── Dispute evidence ──────────────────────────────────────────────────────────
+
+/// Maximum number of evidence hashes retained per dispute.
+pub const MAX_DISPUTE_EVIDENCE: u32 = 10;
+
+/// Returns the evidence hashes attached to `bounty_id`'s dispute, if any.
+pub fn get_dispute_evidence(env: &Env, bounty_id: &BountyId) -> Vec<soroban_sdk::BytesN<32>> {
+    let key = DataKey::DisputeEvidence(bounty_id.clone());
+    let result: Option<Vec<soroban_sdk::BytesN<32>>> = env.storage().persistent().get(&key);
+    if result.is_some() {
+        extend(env, &key);
+    }
+    result.unwrap_or_else(|| Vec::new(env))
+}
+
+/// Append `hash` to `bounty_id`'s dispute evidence list.
+pub fn append_dispute_evidence(env: &Env, bounty_id: &BountyId, hash: &soroban_sdk::BytesN<32>) {
+    let mut evidence = get_dispute_evidence(env, bounty_id);
+    evidence.push_back(hash.clone());
+    let key = DataKey::DisputeEvidence(bounty_id.clone());
+    env.storage().persistent().set(&key, &evidence);
+    extend(env, &key);
+}
+
+// ── Dispute appeal window ─────────────────────────────────────────────────────
+
+/// Returns the configured appeal window, in ledgers. `0` keeps the
+/// immediate-payout behaviour (the default).
+pub fn get_appeal_window(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::AppealWindow)
+        .unwrap_or(0)
+}
+
+/// Configure the appeal window, in ledgers. `0` disables it.
+pub fn set_appeal_window(env: &Env, ledgers: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::AppealWindow, &ledgers);
+}
+
+/// Returns the pending (undecided) dispute resolution for `bounty_id`, if any.
+pub fn get_pending_resolution(env: &Env, bounty_id: &BountyId) -> Option<PendingResolution> {
+    let key = DataKey::PendingResolution(bounty_id.clone());
+    let result = env.storage().persistent().get(&key);
+    if result.is_some() {
+        extend(env, &key);
+    }
+    result
+}
+
+/// Store a dispute decision awaiting finalization or appeal.
+pub fn set_pending_resolution(env: &Env, bounty_id: &BountyId, resolution: &PendingResolution) {
+    let key = DataKey::PendingResolution(bounty_id.clone());
+    env.storage().persistent().set(&key, resolution);
+    extend(env, &key);
+}
+
+/// Remove a bounty's pending dispute resolution (after finalize or appeal).
+pub fn remove_pending_resolution(env: &Env, bounty_id: &BountyId) {
+    let key = DataKey::PendingResolution(bounty_id.clone());
+    env.storage().persistent().remove(&key);
+}
+
+/// Returns whether `bounty_id`'s dispute has already used its one allowed appeal.
+pub fn get_dispute_appealed(env: &Env, bounty_id: &BountyId) -> bool {
+    let key = DataKey::DisputeAppealed(bounty_id.clone());
+    let result: Option<bool> = env.storage().persistent().get(&key);
+    if result.is_some() {
+        extend(env, &key);
+    }
+    result.unwrap_or(false)
+}
+
+/// Mark `bounty_id`'s dispute as having used its one allowed appeal.
+pub fn set_dispute_appealed(env: &Env, bounty_id: &BountyId) {
+    let key = DataKey::DisputeAppealed(bounty_id.clone());
+    env.storage().persistent().set(&key, &true);
     extend(env, &key);
 }

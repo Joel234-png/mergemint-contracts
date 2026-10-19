@@ -46,6 +46,16 @@ pub enum ContractError {
     AmountMustBePositive,
     SubmissionRequired,
     DuplicateTag,
+    CreatorLimitReached,
+    NotAdmin,
+    ClaimCooldownActive,
+    OnlyPartyCanAddEvidence,
+    EvidenceLimitReached,
+    DisputeAlreadyResolved,
+    NoPendingResolution,
+    AppealWindowClosed,
+    AlreadyAppealed,
+    FinalizeTooEarly,
 }
 
 /// Convert a `ContractError` to its canonical panic message and panic.
@@ -99,5 +109,17 @@ pub const fn message(e: ContractError) -> &'static str {
         ContractError::AmountMustBePositive => "amount must be positive",
         ContractError::SubmissionRequired => "a work submission is required before approval",
         ContractError::DuplicateTag => "duplicate tag",
+        ContractError::CreatorLimitReached => "creator has reached the open bounty limit",
+        ContractError::NotAdmin => "caller is not the contract admin",
+        ContractError::ClaimCooldownActive => "claim cooldown is still active for this contributor",
+        ContractError::OnlyPartyCanAddEvidence => {
+            "only the creator or assignee may add dispute evidence"
+        }
+        ContractError::EvidenceLimitReached => "dispute evidence limit reached",
+        ContractError::DisputeAlreadyResolved => "dispute has already been resolved",
+        ContractError::NoPendingResolution => "no pending dispute decision for this bounty",
+        ContractError::AppealWindowClosed => "the appeal window has closed",
+        ContractError::AlreadyAppealed => "this dispute has already been appealed",
+        ContractError::FinalizeTooEarly => "the appeal window has not yet passed",
     }
 }
