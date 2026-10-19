@@ -11,6 +11,7 @@ import { Leaderboard } from './pages/Leaderboard';
 import { Stats } from './pages/Stats';
 import { Admin } from './pages/Admin';
 import { NotFound } from './pages/NotFound';
+import MyBounties from './pages/MyBounties';
 import { BountyErrorBoundary } from './components/BountyErrorBoundary';
 import { useTranslation } from './i18n';
 
@@ -31,6 +32,7 @@ function Nav() {
       <Link to="/create">{t('nav_create_bounty')}</Link>
       <Link to="/leaderboard">{t('nav_leaderboard')}</Link>
       <Link to="/stats">{t('nav_stats')}</Link>
+      <Link to="/my-bounties">{t('nav_my_bounties')}</Link>
       <Link to="/admin">{t('nav_admin')}</Link>
       <Link to="/create" role="button">{t('nav_create_bounty')}</Link>
       <WalletConnectButton address={address} onConnect={connect} />
@@ -51,6 +53,7 @@ export default function App() {
           <Route path="/contributors/:address" element={<ContributorProfile />} />
           <Route path="/leaderboard" element={<Leaderboard />} />
           <Route path="/stats" element={<Stats />} />
+          <Route path="/my-bounties" element={<MyBounties />} />
           <Route path="/admin" element={<Admin />} />
           <Route
             path="/"
@@ -81,7 +84,7 @@ export default function App() {
             element={
               <BountyErrorBoundary>
                 <ContributorProfile />
-              </ContributorProfile>
+              </BountyErrorBoundary>
             }
           />
           <Route path="*" element={<NotFound />} />

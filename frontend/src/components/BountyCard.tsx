@@ -5,14 +5,17 @@ import { formatRelative, isDeadlineUrgent, shortenAddress } from "../utils/forma
 import { CopyButton } from "./CopyButton";
 import { BountyCardSkeleton } from "./BountyCardSkeleton";
 import { ReputationBadge } from "./ReputationBadge";
+import { ReopenBounty } from "./ReopenBounty";
 
 interface BountyCardProps {
   bounty?: Bounty | ApiBounty;
   loading?: boolean;
   highlighted?: boolean;
+  currentUser?: string;
+  onReopen?: (bountyId: string, newDeadline: number) => Promise<void> | void;
 }
 
-export function BountyCard({ bounty, loading, highlighted }: BountyCardProps) {
+export function BountyCard({ bounty, loading, highlighted, currentUser, onReopen }: BountyCardProps) {
   const { t } = useTranslation();
 
   if (loading || !bounty) {
@@ -29,6 +32,11 @@ export function BountyCard({ bounty, loading, highlighted }: BountyCardProps) {
   const exactDeadline = deadline != null ? new Date(deadline * 1000).toLocaleString() : null;
 
   const creatorReputation = "creatorReputation" in bounty ? bounty.creatorReputation : undefined;
+
+  // Reopen is only offered to the creator of an expired bounty.
+  const isExpired = deadline != null && deadline * 1000 <= Date.now();
+  const isCreator = currentUser != null && currentUser === bounty.creator;
+  const canReopen = isExpired && isCreator && onReopen != null;
 
   return (
     <div className={className}>
@@ -62,6 +70,9 @@ export function BountyCard({ bounty, loading, highlighted }: BountyCardProps) {
             </span>
           )}
         </span>
+      )}
+      {canReopen && (
+        <ReopenBounty bountyId={bounty.id} onReopen={onReopen!} />
       )}
     </div>
   );

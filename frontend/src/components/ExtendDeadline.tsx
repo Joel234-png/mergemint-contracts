@@ -15,7 +15,7 @@ interface ExtendDeadlineProps {
 
 /** Convert a Unix timestamp (seconds) to a date string in the format required
  *  by <input type="date">: "YYYY-MM-DD". */
-function toDateInputValue(unixSeconds: number): string {
+export function toDateInputValue(unixSeconds: number): string {
   const d = new Date(unixSeconds * 1000);
   const yyyy = d.getFullYear();
   const mm = String(d.getMonth() + 1).padStart(2, '0');
@@ -24,8 +24,44 @@ function toDateInputValue(unixSeconds: number): string {
 }
 
 /** Convert a "YYYY-MM-DD" string back to a Unix timestamp (start of day UTC). */
-function fromDateInputValue(value: string): number {
+export function fromDateInputValue(value: string): number {
   return Math.floor(new Date(`${value}T00:00:00Z`).getTime() / 1000);
+}
+
+interface DeadlineInputProps {
+  id: string;
+  value: string;
+  min: string;
+  disabled?: boolean;
+  error?: string | null;
+  onChange: (value: string) => void;
+}
+
+/**
+ * Shared deadline picker used by ExtendDeadline and ReopenBounty.
+ * Renders a labelled date input plus an optional inline validation error.
+ */
+export function DeadlineInput({ id, value, min, disabled, error, onChange }: DeadlineInputProps) {
+  return (
+    <>
+      <label htmlFor={id}>New deadline</label>
+      <input
+        id={id}
+        type="date"
+        value={value}
+        min={min}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={disabled}
+        aria-describedby={error ? `${id}-error` : undefined}
+      />
+
+      {error && (
+        <p id={`${id}-error`} className="error" role="alert">
+          {error}
+        </p>
+      )}
+    </>
+  );
 }
 
 /**
@@ -85,22 +121,14 @@ export function ExtendDeadline({ bounty, network, onSuccess }: ExtendDeadlinePro
         </p>
       )}
 
-      <label htmlFor="extend-deadline-date">New deadline</label>
-      <input
+      <DeadlineInput
         id="extend-deadline-date"
-        type="date"
         value={selectedDate}
         min={minDate}
-        onChange={(e) => handleDateChange(e.target.value)}
         disabled={pending}
-        aria-describedby={validationError ? 'extend-deadline-error' : undefined}
+        error={validationError}
+        onChange={handleDateChange}
       />
-
-      {validationError && (
-        <p id="extend-deadline-error" className="error" role="alert">
-          {validationError}
-        </p>
-      )}
 
       <TxButton
         type="submit"

@@ -4,6 +4,7 @@ const en = {
   nav_create_bounty: 'Create Bounty',
   nav_leaderboard: 'Leaderboard',
   nav_stats: 'Stats',
+  nav_my_bounties: 'My Bounties',
   nav_admin: 'Admin',
 
   // BountyList
