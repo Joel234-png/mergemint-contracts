@@ -45,6 +45,7 @@ pub enum ContractError {
     NotAssignee,
     AmountMustBePositive,
     SubmissionRequired,
+    DuplicateTag,
 }
 
 /// Convert a `ContractError` to its canonical panic message and panic.
@@ -97,5 +98,6 @@ pub const fn message(e: ContractError) -> &'static str {
         ContractError::NotAssignee => "caller is not an assignee of this bounty",
         ContractError::AmountMustBePositive => "amount must be positive",
         ContractError::SubmissionRequired => "a work submission is required before approval",
+        ContractError::DuplicateTag => "duplicate tag",
     }
 }

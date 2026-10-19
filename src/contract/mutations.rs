@@ -6,6 +6,37 @@ use crate::symbols::{
 /// Minimum reward amount enforced at bounty creation.
 const MIN_REWARD_AMOUNT: i128 = 100;
 
+/// Minimum number of ledgers a bounty must sit in a terminal status
+/// (`"completed"` or `"cancelled"`) before anyone can archive it. Chosen to
+/// give indexers/UIs a grace window to read the full record before it is
+/// compacted. At ~5s/ledger this is roughly 1 day.
+const ARCHIVE_GRACE_PERIOD_LEDGERS: u32 = 17_280;
+
+/// Maximum number of tags a bounty may carry. Documented in
+/// `docs/contract-reference.md`. Enforced by `validate_tags`, used from both
+/// `create_bounty` and `update_tags` so a bounty can never accumulate more
+/// tags (or duplicates) after creation than it could at creation time.
+const MAX_TAGS: u32 = 5;
+
+/// Validate a tag list: reject more than `MAX_TAGS` entries, reject
+/// duplicates, and reject any tag not on the allow-list (via
+/// `symbols::validate_symbol_or_fail`).
+fn validate_tags(env: &Env, tags: &Vec<Symbol>) {
+    if tags.len() > MAX_TAGS {
+        fail(ContractError::TooManyTags);
+    }
+
+    for i in 0..tags.len() {
+        let tag = tags.get(i).unwrap();
+        symbols::validate_symbol_or_fail(env, SymbolKind::Tag, &tag);
+        for j in (i + 1)..tags.len() {
+            if tags.get(j).unwrap() == tag {
+                fail(ContractError::DuplicateTag);
+            }
+        }
+    }
+}
+
 /// Verify a bounty's status is one of `allowed`, failing with `err` otherwise.
 ///
 /// Centralizes the status-transition guards that used to be duplicated
@@ -63,7 +94,7 @@ fn distribute_payout(
 
         let mut contrib = storage::get_contributor(env, &assignee)
             .unwrap_or_else(|| Contributor::new(assignee.clone()));
-        contrib.reputation += 10;
+        set_reputation(env, &mut contrib, &assignee, 10, "completion");
         contrib.total_earned += payout;
         contrib.contribution_count += 1;
         if contrib.active_claims > 0 {
@@ -105,6 +136,28 @@ fn refund_escrow(env: &Env, bounty_id: &BountyId, bounty: &Bounty) {
         let token = TokenClient::new(env, &bounty.reward_token);
         token.transfer(&contract_address, &bounty.creator, &creator_amount);
     }
+}
+
+/// Apply a reputation delta to `contrib` and emit a single `reputation_changed`
+/// event documenting the old value, new value and reason.
+///
+/// All reputation writes must go through this helper so that every change is
+/// observable by indexers (see `docs/event-schema.md`).
+fn set_reputation(env: &Env, contrib: &mut Contributor, address: &Address, delta: i64, reason: &str) {
+    let old_reputation = contrib.reputation;
+    let new_reputation = if delta >= 0 {
+        old_reputation.saturating_add(delta as u32)
+    } else {
+        old_reputation.saturating_sub((-delta) as u32)
+    };
+    contrib.reputation = new_reputation;
+    events::emit_reputation_changed(
+        env,
+        address,
+        old_reputation,
+        new_reputation,
+        Symbol::new(env, reason),
+    );
 }
 
 /// Decrement a contributor's active claims counter, if greater than zero.
@@ -224,13 +277,7 @@ impl MergeMintContract {
             fail(ContractError::RewardBelowMinimum);
         }
 
-        if tags.len() > 5 {
-            fail(ContractError::TooManyTags);
-        }
-
-        for tag in tags.iter() {
-            symbols::validate_symbol_or_fail(&env, SymbolKind::Tag, &tag);
-        }
+        validate_tags(&env, &tags);
 
         if max_assignees < 1 {
             fail(ContractError::MaxAssigneesMustBePositive);
@@ -289,6 +336,7 @@ impl MergeMintContract {
         storage::add_bounty_to_status(&env, &id, &bounty.status);
         storage::append_creator_bounty(&env, &creator, &id);
         storage::add_open_bounty(&env, &id);
+        storage::append_token_bounty(&env, &bounty.reward_token, &id);
 
         events::emit_bounty_created(&env, &id, &creator, &reward_amount);
         id
@@ -742,7 +790,7 @@ impl MergeMintContract {
                     let mut contrib = storage::get_contributor(&env, &assignee)
                         .unwrap_or_else(|| Contributor::new(assignee.clone()));
 
-                    contrib.reputation += 10;
+                    set_reputation(&env, &mut contrib, &assignee, 10, "completion");
                     contrib.total_earned += payout;
                     contrib.contribution_count += 1;
                     decrement_active_claims(&mut contrib);
@@ -1209,6 +1257,106 @@ impl MergeMintContract {
 
         events::emit_bounty_reopened(&env, &bounty_id, &creator, new_deadline);
     }
+
+    /// Replace a bounty's tag list.
+    ///
+    /// Restricted to the bounty creator. Subject to the same validation as
+    /// `create_bounty`: at most `MAX_TAGS` tags, no duplicates, and each tag
+    /// must be on the allow-list.
+    ///
+    /// # Arguments
+    /// * `creator` - The wallet that created the bounty.
+    /// * `bounty_id` - The identifier of the bounty to update.
+    /// * `tags` - The new tag list, replacing the existing one entirely.
+    ///
+    /// # Panics
+    /// * If `bounty_id` does not exist (`ContractError::BountyNotFound`).
+    /// * If `creator` is not the bounty creator (`ContractError::NotBountyCreator`).
+    /// * If `tags.len() > MAX_TAGS` (`ContractError::TooManyTags`).
+    /// * If `tags` contains a duplicate (`ContractError::DuplicateTag`).
+    /// * If any tag is not on the allow-list (`ContractError::InvalidTag`).
+    ///
+    /// # Authorization
+    /// Requires auth from `creator`.
+    pub fn update_tags(env: Env, creator: Address, bounty_id: BountyId, tags: Vec<Symbol>) {
+        creator.require_auth();
+
+        let mut bounty = match storage::get_bounty(&env, &bounty_id) {
+            Some(b) => b,
+            None => fail(ContractError::BountyNotFound),
+        };
+
+        if creator != bounty.creator {
+            fail(ContractError::NotBountyCreator);
+        }
+
+        validate_tags(&env, &tags);
+
+        bounty.tags = tags;
+        storage::store_bounty(&env, &bounty_id, &bounty);
+    }
+
+    /// Archive a finished bounty, compacting it into a `BountySummary` and
+    /// removing the full `Bounty`/`BountyMeta` records to stop extending
+    /// their TTL (and so paying rent on data nobody reads anymore).
+    ///
+    /// Only bounties in a terminal status (`"completed"` or `"cancelled"`)
+    /// can be archived. Callable by anyone (not just the creator), subject
+    /// to a grace period: the first call against an eligible bounty sets a
+    /// grace-period marker and fails with `DeadlineNotPassed`; a subsequent
+    /// call made at least `ARCHIVE_GRACE_PERIOD_LEDGERS` later succeeds.
+    ///
+    /// After archiving, `get_bounty` keeps returning a (summary-only)
+    /// `Bounty` for `bounty_id` so existing callers do not start seeing
+    /// `None` for bounties that used to exist.
+    ///
+    /// # Panics
+    /// * If `bounty_id` does not exist (`ContractError::BountyNotFound`).
+    /// * If the bounty is not completed or cancelled (`ContractError::InvalidStatus`).
+    /// * If the grace period has not yet elapsed (`ContractError::DeadlineNotPassed`).
+    pub fn archive_bounty(env: Env, bounty_id: BountyId) {
+        let bounty = match storage::get_bounty(&env, &bounty_id) {
+            Some(b) => b,
+            None => fail(ContractError::BountyNotFound),
+        };
+
+        let is_finished = bounty.status == Symbol::new(&env, STATUS_COMPLETED)
+            || bounty.status == Symbol::new(&env, STATUS_CANCELLED);
+        if !is_finished {
+            fail(ContractError::InvalidStatus);
+        }
+
+        let now = env.ledger().sequence();
+        match storage::get_archive_eligible_at(&env, &bounty_id) {
+            None => {
+                storage::set_archive_eligible_at(
+                    &env,
+                    &bounty_id,
+                    now + ARCHIVE_GRACE_PERIOD_LEDGERS,
+                );
+                fail(ContractError::DeadlineNotPassed);
+            }
+            Some(eligible_at) => {
+                if now < eligible_at {
+                    fail(ContractError::DeadlineNotPassed);
+                }
+            }
+        }
+
+        let assignee = bounty.assignees.get(0).map(|(address, _)| address);
+        let summary = BountySummary {
+            id: bounty_id.clone(),
+            creator: bounty.creator.clone(),
+            assignee,
+            status: bounty.status.clone(),
+            reward: bounty.reward_amount,
+        };
+
+        storage::store_bounty_archive(&env, &bounty_id, &summary);
+        storage::remove_bounty_body(&env, &bounty_id);
+        storage::remove_archive_eligible_at(&env, &bounty_id);
+        storage::remove_token_bounty(&env, &bounty.reward_token, &bounty_id);
+
+        events::emit_bounty_archived(&env, &bounty_id);
+    }
 }
-
-

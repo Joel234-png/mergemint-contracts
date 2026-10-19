@@ -40,6 +40,12 @@ const TUPLE_EVENTS: &[&str] = &[
     "dispute_resolved",
 ];
 
+/// Events that are keyed by contributor address and carry no `bounty_id` at
+/// all. `extract_bounty_id_hex` intentionally returns `None` for these; the
+/// caller routes them to reputation/profile handling instead of bounty
+/// handling. See `reputation_changed` in `docs/event-schema.md`.
+const CONTRIBUTOR_ONLY_EVENTS: &[&str] = &["reputation_changed", "contributor_metadata_updated"];
+
 // ---------------------------------------------------------------------------
 // extract_bounty_id_hex  (lines 29-38 in the original design)
 // ---------------------------------------------------------------------------

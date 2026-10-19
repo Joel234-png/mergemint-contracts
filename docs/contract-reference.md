@@ -90,6 +90,7 @@ Allowed symbol values (`src/symbols.rs`):
 | [`get_contributor_active_bounty`](#get_contributor_active_bounty) | query | none | — | — |
 | [`get_contributor_bounty_history`](#get_contributor_bounty_history) | query | none | — | — |
 | [`get_bounties_by_creator`](#get_bounties_by_creator) | query | none | — | — |
+| [`get_bounties_by_token`](#get_bounties_by_token) | query | none | — | — |
 
 ---
 
@@ -126,7 +127,7 @@ Creates a bounty in status `open` and returns its ID.
 | `reward_token` | SEP-41 token contract. Probed with `balance()` to confirm it is a token. |
 | `min_reputation` | Minimum `Contributor.reputation` needed to claim. `0` means no minimum. |
 | `deadline` | Optional ledger sequence. Claims are rejected after it, and it enables `expire_bounty`. |
-| `tags` | At most 5, each from the tag allow-list. |
+| `tags` | At most `MAX_TAGS` (5), each from the tag allow-list, no duplicates. Also enforced by `update_tags`. |
 | `max_assignees` | Maximum number of claimants, `>= 1`. The reward is split equally in basis points, and the first claimant gets the remainder. |
 | `required_verifiers` | Optional allow-list for `approve_completion`. `None` means single-verifier completion. |
 | `approval_threshold` | Approvals needed when `required_verifiers` is set. Must be `<= required_verifiers.len()`. `0` is treated as `1`. |
@@ -140,8 +141,9 @@ validation below, not first. It is the one exception to the rule in
 
 1. `RewardMustBePositive` → `"reward_amount must be positive"` when `reward_amount <= 0`
 2. `RewardBelowMinimum` → `"reward_amount is below the minimum allowed"` when `reward_amount < 100`
-3. `TooManyTags` → `"too many tags"` when `tags.len() > 5`
-4. `InvalidTag` → `"invalid bounty tag"` when a tag is not on the allow-list
+3. `TooManyTags` → `"too many tags"` when `tags.len() > MAX_TAGS` (5)
+4. `DuplicateTag` → `"duplicate tag"` when `tags` contains the same tag twice
+5. `InvalidTag` → `"invalid bounty tag"` when a tag is not on the allow-list
 5. `MaxAssigneesMustBePositive` → `"max_assignees must be at least 1"`
 6. `ApprovalThresholdExceedsVerifiers` → `"approval_threshold cannot exceed the number of required_verifiers"`
 7. `InvalidRewardToken` → `"invalid reward_token address"` when the `balance()` probe fails
@@ -477,6 +479,7 @@ exhausted.
 | <a id="get_contributor_active_bounty"></a>`get_contributor_active_bounty` | `(address: Address) -> Option<BountyId>` | The first `in_progress` bounty that lists `address` as an assignee. | none |
 | <a id="get_contributor_bounty_history"></a>`get_contributor_bounty_history` | `(address: Address, offset: u32, limit: u32) -> Vec<BountyId>` | Bounded page of bounties where `address` was an assignee when they reached `completed`/`cancelled`, newest first. Limit capped at 50. | none |
 | <a id="get_bounties_by_creator"></a>`get_bounties_by_creator` | `(creator: Address, cursor: Option<u32>, limit: u32) -> (Vec<BountyId>, Option<u32>)` | One page of the bounties created by `creator`, in creation order. | none |
+| <a id="get_bounties_by_token"></a>`get_bounties_by_token` | `(token: Address, cursor: Option<u32>, limit: u32) -> (Vec<BountyId>, Option<u32>)` | One page of the bounties paid in `token` (`reward_token`), in creation order. Same cursor/limit pagination as `get_bounties_by_creator`; `limit` capped at `MAX_LIMIT` (50). Pruned on `archive_bounty`. | none |
 
 ---
 
@@ -523,7 +526,8 @@ Every `ContractError` variant and the entry points that can return it.
 | `BountyNoDeadline` | bounty has no deadline | `expire_bounty` |
 | `DeadlineNotPassed` | deadline has not passed | `expire_bounty` |
 | `ReputationTooLow` | contributor reputation is too low | `claim_bounty`, `resolve_dispute` |
-| `TooManyTags` | too many tags | `create_bounty` |
+| `TooManyTags` | too many tags | `create_bounty`, `update_tags` |
+| `DuplicateTag` | duplicate tag | `create_bounty`, `update_tags` |
 | `MaxAssigneesMustBePositive` | max_assignees must be at least 1 | `create_bounty` |
 | `OnlyCreatorOrAssigneeCanDispute` | only creator or assignee can raise dispute | `raise_dispute` |
 | `VerifierNotAuthorized` | verifier is not in the required verifiers list | `approve_completion` |

@@ -114,3 +114,14 @@ Baseline concurrent-request latency and error rate for `mergemint-backend`'s HTT
 | `POST /tx/resolve-dispute` | 200 | 0 | 0.00% | 1.56 | 36.90 | 170.46 | 261.56 |
 
 > Reproduce with `cargo build --bin mergemint-backend && ./target/debug/mergemint-backend &` then run the command above. See `scripts/load_test.sh` for `HOST`/`CONCURRENCY`/`REQUESTS` overrides.
+
+## Bounty archiving storage footprint
+
+Approximate per-bounty persistent-storage footprint before and after `archive_bounty` compacts a finished bounty into a `BountySummary`. Based on the field layout of `Bounty`/`BountyMeta` (title, description, tags, milestones, verifier list, assignees) versus `BountySummary` (id, creator, assignee, status, reward).
+
+| Record | Fields retained | Approx. XDR size |
+|--------|------------------|------------------:|
+| `Bounty` + `BountyMeta` (pre-archive) | creator, reward_amount, reward_token, assignees, max_assignees, status, min_reputation, deadline, required_verifiers, approval_threshold, tags, milestones, title, description | ~300–900+ bytes (variable: scales with tags/milestones/verifiers/description length) |
+| `BountySummary` (post-archive) | id, creator, assignee, status, reward | ~90–110 bytes (fixed-ish; one optional `Address`) |
+
+Archiving a finished bounty also removes its `Bounty(id)` and `BountyMeta(id)` persistent entries entirely, so those stop being extended by `extend_ttl` on every read — the dominant long-run rent cost for bounties nobody touches again. The exact bytes-saved figure depends on the bounty's tag/milestone/verifier/description sizes; this table gives the field-level shape rather than a single measured number (no `cargo` run was performed to produce an exact benchmark).

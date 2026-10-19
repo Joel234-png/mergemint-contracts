@@ -1924,10 +1924,11 @@ fn test_resolve_dispute_event_order() {
         event_topics_since(&env, &contract_id, 0),
         vec![
             &env,
+            Symbol::new(&env, "reputation_changed"),
             Symbol::new(&env, "reward_paid"),
             Symbol::new(&env, "dispute_resolved"),
         ],
-        "resolve_dispute(complete) must emit reward_paid before dispute_resolved"
+        "resolve_dispute(complete) must emit reputation_changed and reward_paid before dispute_resolved"
     );
 }
 

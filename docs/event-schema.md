@@ -94,6 +94,26 @@ Contract events emitted for indexer integration.
 - **Trigger**: Bounty creator reopens an expired bounty with a new deadline
 - **Purpose**: Notify indexer of bounty reactivation and updated deadline
 
+### bounty_archived
+- **Topics**: `(Symbol("bounty_archived"),)`
+- **Data**: `bounty_id`
+- **Trigger**: `archive_bounty` compacts a finished bounty into a `BountySummary`
+- **Purpose**: Tell the indexer the full bounty record is gone so it can rely on `get_bounty_summary` / the degenerate `get_bounty` fallback for this id going forward
+
+### reputation_changed
+- **Topics**: `(Symbol("reputation_changed"), contributor_address)`
+- **Data**: `(old_reputation, new_reputation, reason)`
+- **Trigger**: Emitted every time a contributor's reputation score is written via the
+  `set_reputation` helper in `src/contract/mutations.rs`
+- **Reasons** (`reason` symbol):
+  - `"completion"` — reward applied when a bounty assignee is paid out on completion
+    (including arbitrator-resolved completion)
+  - `"penalty"` — reserved for future penalty paths (e.g. abandoned claims)
+  - `"decay"` — reserved for future time-based reputation decay
+- **Purpose**: Let the leaderboard and profile pages show why a contributor's score moved.
+  Unlike the bounty-scoped events above, this event is keyed by `contributor_address`
+  and carries no `bounty_id`.
+
 ## Queries
 
 ### get_contributor_bounty_history

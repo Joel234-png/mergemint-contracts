@@ -105,8 +105,14 @@ proptest! {
         let (env, client, creator, token_addr) = create_test_env();
 
         let mut tags = SorobanVec::new(&env);
+        let mut seen_idx: std::vec::Vec<usize> = std::vec::Vec::new();
         for &idx in &tag_indices {
-            tags.push_back(Symbol::new(&env, ALLOWED_TAGS[idx]));
+            // create_bounty now rejects duplicate tags, so de-duplicate the
+            // generated indices before building the tag list.
+            if !seen_idx.contains(&idx) {
+                seen_idx.push(idx);
+                tags.push_back(Symbol::new(&env, ALLOWED_TAGS[idx]));
+            }
         }
 
         let required_verifiers = if num_verifiers > 0 {
@@ -351,6 +357,33 @@ proptest! {
             &SorobanVec::new(&env),
         );
         prop_assert!(res.is_err(), "Expected error for tag count > 5: {}", tag_count);
+    }
+
+    #[test]
+    fn prop_duplicate_tag_rejected(
+        tag_idx in 0usize..ALLOWED_TAGS.len(),
+    ) {
+        let (env, client, creator, token_addr) = create_test_env();
+
+        let mut tags = SorobanVec::new(&env);
+        tags.push_back(Symbol::new(&env, ALLOWED_TAGS[tag_idx]));
+        tags.push_back(Symbol::new(&env, ALLOWED_TAGS[tag_idx]));
+
+        let res = client.try_create_bounty(
+            &creator,
+            &Symbol::new(&env, "bug"),
+            &SorobanString::from_str(&env, "desc"),
+            &1000,
+            &token_addr,
+            &0,
+            &None,
+            &tags,
+            &1,
+            &None,
+            &1,
+            &SorobanVec::new(&env),
+        );
+        prop_assert!(res.is_err(), "Expected error for duplicate tag");
     }
 
     #[test]
