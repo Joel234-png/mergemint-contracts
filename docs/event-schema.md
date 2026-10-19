@@ -46,12 +46,6 @@ Contract events emitted for indexer integration.
 - **Trigger**: Bounty reaches deadline without completion
 - **Purpose**: Notify indexer of bounty expiration
 
-### bounty_reopened
-- **Topics**: `(Symbol("bounty_reopened"), creator_address)`
-- **Data**: `(bounty_id, new_deadline)`
-- **Trigger**: Creator reopens an expired bounty via `reopen_bounty`
-- **Purpose**: Notify indexer that an expired bounty is open again with a new deadline
-
 ### bounty_reassigned
 - **Topics**: `(Symbol("bounty_reassigned"), old_assignee_address)`
 - **Data**: `(bounty_id, new_assignee_address)`

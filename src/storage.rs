@@ -625,12 +625,7 @@ fn set_sponsors(env: &Env, bounty_id: &BountyId, sponsors: &Vec<(Address, i128)>
 
 /// Records `amount` as contributed by `sponsor`, adding to any prior
 /// contribution from the same address.
-pub fn add_sponsor_contribution(
-    env: &Env,
-    bounty_id: &BountyId,
-    sponsor: &Address,
-    amount: i128,
-) {
+pub fn add_sponsor_contribution(env: &Env, bounty_id: &BountyId, sponsor: &Address, amount: i128) {
     let mut sponsors = get_sponsors(env, bounty_id);
     let mut found = false;
     let mut updated: Vec<(Address, i128)> = Vec::new(env);

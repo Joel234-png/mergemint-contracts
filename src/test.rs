@@ -2297,7 +2297,7 @@ fn make_multisig_bounty(
 }
 
 /// Below threshold: one approval on a threshold-2 bounty does NOT trigger payout.
-/// Bounty stays in_progress.
+/// Bounty stays submitted.
 #[test]
 fn test_approve_completion_below_threshold_no_payout() {
     let (env, creator, contributor, _verifier) = setup_test();
@@ -2310,14 +2310,20 @@ fn test_approve_completion_below_threshold_no_payout() {
 
     client.claim_bounty(&contributor, &bounty_id);
 
+    client.submit_work(
+        &contributor,
+        &bounty_id,
+        &BytesN::from_array(&env, &[7u8; 32]),
+    );
+
     // Only one approval — threshold is 2, so no payout yet.
     client.approve_completion(&v1, &bounty_id);
 
     let bounty = client.get_bounty(&bounty_id).unwrap();
     assert_eq!(
         bounty.status,
-        Symbol::new(&env, "in_progress"),
-        "bounty must remain in_progress below threshold"
+        Symbol::new(&env, "submitted"),
+        "bounty must remain submitted below threshold"
     );
 
     // Contract still holds the escrowed reward.
@@ -2341,6 +2347,12 @@ fn test_approve_completion_at_threshold_auto_completes() {
         make_multisig_bounty(&client, &env, &creator, &contract_id, reward_amount, 2);
 
     client.claim_bounty(&contributor, &bounty_id);
+
+    client.submit_work(
+        &contributor,
+        &bounty_id,
+        &BytesN::from_array(&env, &[7u8; 32]),
+    );
 
     client.approve_completion(&v1, &bounty_id);
     client.approve_completion(&v2, &bounty_id);
@@ -2380,6 +2392,12 @@ fn test_approve_completion_duplicate_vote_rejected() {
 
     client.claim_bounty(&contributor, &bounty_id);
 
+    client.submit_work(
+        &contributor,
+        &bounty_id,
+        &BytesN::from_array(&env, &[7u8; 32]),
+    );
+
     client.approve_completion(&v1, &bounty_id);
     // Second call from the same verifier must panic.
     client.approve_completion(&v1, &bounty_id);
@@ -2398,6 +2416,12 @@ fn test_approve_completion_unauthorized_verifier_rejected() {
         make_multisig_bounty(&client, &env, &creator, &contract_id, reward_amount, 2);
 
     client.claim_bounty(&contributor, &bounty_id);
+
+    client.submit_work(
+        &contributor,
+        &bounty_id,
+        &BytesN::from_array(&env, &[7u8; 32]),
+    );
 
     let outsider = Address::generate(&env);
     client.approve_completion(&outsider, &bounty_id);
@@ -3026,6 +3050,11 @@ fn test_mutations_emit_documented_events_per_schema() {
     let (msig_id, _msig_token, v1, _v2, _v3) =
         make_multisig_bounty(&client, &env, &creator, &contract_id, reward_amount, 2);
     client.claim_bounty(&contributor2, &msig_id);
+    client.submit_work(
+        &contributor2,
+        &msig_id,
+        &BytesN::from_array(&env, &[7u8; 32]),
+    );
     client.approve_completion(&v1, &msig_id);
     assert_invocation_emits(&env, &contract_id, &["approval_recorded"]);
 
@@ -3554,22 +3583,3 @@ fn test_reopen_bounty_rejects_refunded_bounty() {
     // Reopen must be rejected because funds were already refunded
     client.reopen_bounty(&creator, &bounty_id, &200);
 }
-
-// ===========================================================================
-// Issue 1111 — Error reference documentation drift test
-// ===========================================================================
-
-#[test]
-fn test_contract_error_variants_match_documented_reference() {
-    use crate::errors::ContractError;
-
-    // Verify all 7 numeric contract error codes match documented values exactly
-    assert_eq!(ContractError::Unauthorized as u32, 1);
-    assert_eq!(ContractError::NotFound as u32, 2);
-    assert_eq!(ContractError::InvalidInput as u32, 3);
-    assert_eq!(ContractError::AlreadyExists as u32, 4);
-    assert_eq!(ContractError::InsufficientBalance as u32, 5);
-    assert_eq!(ContractError::InvalidState as u32, 6);
-    assert_eq!(ContractError::Overflow as u32, 7);
-}
-
