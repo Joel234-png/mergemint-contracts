@@ -12,6 +12,7 @@ import { CancelBountyDialog } from '../components/CancelBountyDialog';
 import { MilestoneTracker } from '../components/MilestoneTracker';
 import { SubmitWorkModal } from '../components/SubmitWorkModal';
 import { VerifierPanel } from '../components/VerifierPanel';
+import { BountyTimeline } from '../components/BountyTimeline';
 import { useWallet } from '../lib/WalletContext';
 import { CONFIGURED_NETWORK } from '../lib/network';
 import { useTranslation } from '../i18n';
@@ -151,6 +152,7 @@ function BountyDetailInner() {
       {isCreator && bounty.deadline != null && (
         <ExtendDeadline bounty={bounty} network={CONFIGURED_NETWORK} onSuccess={fetchBounty} />
       )}
+      <BountyTimeline bountyId={bounty.id} />
       <TopUpModal
         isOpen={showTopUp}
         onClose={() => setShowTopUp(false)}
