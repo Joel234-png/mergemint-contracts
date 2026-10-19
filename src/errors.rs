@@ -62,6 +62,12 @@ pub enum ContractError {
     MilestoneDeadlinePassed,
     AdminAlreadySet,
     RewardTokenNotAllowed,
+    /// Internal storage invariant violated (e.g. a status index page that
+    /// should contain the bounty being removed turned out to be empty).
+    /// Surfacing this as a typed error rather than panicking on an unwrap
+    /// keeps the failure mode a catchable contract error instead of an
+    /// opaque host trap.
+    CorruptedIndex,
 }
 
 /// Convert a `ContractError` to its canonical panic message and panic.
@@ -135,5 +141,6 @@ pub const fn message(e: ContractError) -> &'static str {
         ContractError::MilestoneDeadlinePassed => "milestone deadline has passed",
         ContractError::AdminAlreadySet => "admin has already been initialized",
         ContractError::RewardTokenNotAllowed => "reward_token is not on the admin allowlist",
+        ContractError::CorruptedIndex => "internal storage index invariant violated",
     }
 }

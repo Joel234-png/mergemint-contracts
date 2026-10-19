@@ -941,4 +941,147 @@ fn test_fuzz_create_bounty_10k_cases() {
             }
         }
     }
+
+    /// Property test: after any sequence of mutations, `get_status_count` for
+    /// every status must equal a full scan of the stored bounties' statuses.
+    ///
+    /// Builds several bounties up front, each with its own pre-funded escrow
+    /// token, then replays a bounded random sequence of operations (claim,
+    /// complete, cancel, expire, dispute, resolve) against randomly chosen
+    /// bounties. Invalid transitions (e.g. cancelling an in-progress bounty)
+    /// are expected to fail and are simply skipped via the `try_*` client
+    /// methods — they must never desync the counters.
+    ///
+    /// Note: this contract has no "unclaim" mutation (there is no way to
+    /// release a claim back to `open` once claimed), so that operation from
+    /// the issue's requested list is intentionally omitted — there is nothing
+    /// to exercise.
+    #[test]
+    fn prop_status_counts_match_full_scan(
+        ops in prop::collection::vec((0u8..=5, 0usize..4), 0..40),
+    ) {
+        let env = Env::new_with_config(EnvTestConfig {
+            capture_snapshot_at_drop: false,
+        });
+        env.mock_all_auths();
+        let contract_id = env.register(MergeMintContract, ());
+        let client = MergeMintContractClient::new(&env, &contract_id);
+
+        const NUM_BOUNTIES: usize = 4;
+        let mut ids: std::vec::Vec<Option<crate::types::BountyId>> =
+            std::vec::Vec::with_capacity(NUM_BOUNTIES);
+        let mut creators: std::vec::Vec<Address> = std::vec::Vec::with_capacity(NUM_BOUNTIES);
+
+        for _ in 0..NUM_BOUNTIES {
+            let creator = Address::generate(&env);
+            let sac = env.register_stellar_asset_contract_v2(creator.clone());
+            let token_addr = sac.address();
+            let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_addr);
+            // Pre-fund the contract's escrow so cancel/expire/resolve refunds
+            // (which transfer out of the contract address) never fail for lack
+            // of balance, independent of the status-count invariant we test.
+            token_admin.mint(&contract_id, &1_000_000_000i128);
+
+            let id = client.create_bounty(
+                &creator,
+                &Symbol::new(&env, "bug"),
+                &SorobanString::from_str(&env, "desc"),
+                &1000,
+                &token_addr,
+                &0,
+                &None,
+                &SorobanVec::new(&env),
+                &1,
+                &None,
+                &1,
+                &SorobanVec::new(&env),
+            );
+            ids.push(Some(id));
+            creators.push(creator);
+        }
+
+        // Reference model: expected status string per bounty slot.
+        let mut model: std::vec::Vec<StdString> =
+            std::vec::from_elem("open".to_string(), NUM_BOUNTIES);
+
+        let statuses = ["open", "in_progress", "completed", "cancelled", "disputed"];
+
+        let check_counts = |env: &Env, client: &MergeMintContractClient, model: &std::vec::Vec<StdString>| {
+            for s in statuses.iter() {
+                let expected = model.iter().filter(|m| m.as_str() == *s).count() as u32;
+                let actual = client.get_status_count(&Symbol::new(env, s));
+                prop_assert_eq!(
+                    actual, expected,
+                    "status count desync for '{}': contract={} model={} (model={:?})",
+                    s, actual, expected, model
+                );
+            }
+            Ok::<(), TestCaseError>(())
+        };
+
+        check_counts(&env, &client, &model)?;
+
+        for (op_code, idx) in ops {
+            if idx >= NUM_BOUNTIES {
+                continue;
+            }
+            let id = match &ids[idx] {
+                Some(id) => id.clone(),
+                None => continue,
+            };
+            let creator = creators[idx].clone();
+            let contributor = Address::generate(&env);
+
+            match op_code {
+                0 => {
+                    // claim: open -> in_progress
+                    if client.try_claim_bounty(&contributor, &id).is_ok() {
+                        model[idx] = "in_progress".to_string();
+                    }
+                }
+                1 => {
+                    // complete: in_progress -> completed (single-verifier flow)
+                    if client.try_complete_bounty(&creator, &id).is_ok() {
+                        model[idx] = "completed".to_string();
+                    }
+                }
+                2 => {
+                    // cancel: open -> cancelled
+                    if client.try_cancel_bounty(&creator, &id).is_ok() {
+                        model[idx] = "cancelled".to_string();
+                    }
+                }
+                3 => {
+                    // expire: requires a deadline in the past; this bounty has
+                    // none, so this is expected to always fail harmlessly and
+                    // must never desync the counters.
+                    let _ = client.try_expire_bounty(&creator, &id);
+                }
+                4 => {
+                    // raise_dispute: in_progress -> disputed
+                    if client.try_raise_dispute(&contributor, &id).is_ok() {
+                        model[idx] = "disputed".to_string();
+                    }
+                }
+                _ => {
+                    // resolve_dispute: disputed -> completed or cancelled
+                    let resolution = if idx % 2 == 0 { "complete" } else { "cancel" };
+                    let res = client.try_resolve_dispute(
+                        &creator,
+                        &id,
+                        &Symbol::new(&env, resolution),
+                    );
+                    if res.is_ok() {
+                        model[idx] = if resolution == "complete" {
+                            "completed".to_string()
+                        } else {
+                            "cancelled".to_string()
+                        };
+                    }
+                }
+            }
+
+            check_counts(&env, &client, &model)?;
+        }
+    }
 }

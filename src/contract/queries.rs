@@ -126,6 +126,27 @@ impl MergeMintContract {
         result
     }
 
+    /// Return `BountyMeta` for each of `ids`, in the same order, for use by
+    /// list pages that would otherwise call `get_bounty` once per card.
+    ///
+    /// Unknown IDs are skipped (not included in the result, not an error).
+    /// The number of IDs processed per call is capped at `MAX_LIMIT` (50);
+    /// any IDs beyond the cap are ignored.
+    pub fn get_bounties_by_ids(env: Env, ids: Vec<BountyId>) -> Vec<BountyMeta> {
+        let mut result: Vec<BountyMeta> = Vec::new(&env);
+        let mut i = 0u32;
+        for id in ids.iter() {
+            if i >= MAX_LIMIT {
+                break;
+            }
+            if let Some(meta) = storage::get_bounty_meta(&env, &id) {
+                result.push_back(meta);
+            }
+            i += 1;
+        }
+        result
+    }
+
     /// Return a contributor's profile (reputation, earnings, active claims),
     /// or `None` if `address` has never interacted with the contract.
     pub fn get_contributor(env: Env, address: Address) -> Option<Contributor> {
