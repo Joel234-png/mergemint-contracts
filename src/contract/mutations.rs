@@ -47,6 +47,15 @@ fn ensure_status(bounty: &Bounty, allowed: &[Symbol], err: ContractError) {
     }
 }
 
+/// Require that `caller` is authenticated and is the configured admin.
+fn require_admin(env: &Env, caller: &Address) {
+    caller.require_auth();
+    match storage::get_admin(env) {
+        Some(admin) if admin == *caller => {}
+        _ => fail(ContractError::NotAdmin),
+    }
+}
+
 fn generate_bounty_id(env: &Env, count: u64) -> BountyId {
     let mut buf = [0u8; 32];
     let count_bytes = count.to_be_bytes();
@@ -362,13 +371,34 @@ impl MergeMintContract {
 
         validate_reward_token(&env, &reward_token);
 
+        if !storage::is_reward_token_allowed(&env, &reward_token) {
+            fail(ContractError::RewardTokenNotAllowed);
+        }
+
         if !milestones.is_empty() {
             let mut total: i128 = 0;
+            let mut previous_deadline: Option<u32> = None;
             for m in milestones.iter() {
                 total = match total.checked_add(m.reward) {
                     Some(sum) => sum,
                     None => fail(ContractError::RewardAmountOverflow),
                 };
+
+                // Milestone deadlines (when set) must be non-decreasing and
+                // must not exceed the bounty's own deadline.
+                if let Some(milestone_deadline) = m.deadline {
+                    if let Some(prev) = previous_deadline {
+                        if milestone_deadline < prev {
+                            fail(ContractError::MilestoneDeadlineInvalid);
+                        }
+                    }
+                    if let Some(bounty_deadline) = deadline {
+                        if milestone_deadline > bounty_deadline {
+                            fail(ContractError::MilestoneDeadlineInvalid);
+                        }
+                    }
+                    previous_deadline = Some(milestone_deadline);
+                }
             }
             if total != reward_amount {
                 fail(ContractError::MilestoneRewardsMismatch);
@@ -517,6 +547,13 @@ impl MergeMintContract {
         };
         bounty.assignees.push_back((contributor.clone(), share_bp));
 
+        // Record the claim ledger for the first assignee so
+        // `release_stale_claim` can detect claims that sit idle past the
+        // configured claim window without any work submitted.
+        if storage::get_claimed_at_ledger(&env, &bounty_id).is_none() {
+            storage::set_claimed_at_ledger(&env, &bounty_id, env.ledger().sequence());
+        }
+
         let previous_status = bounty.status.clone();
         bounty.status = Symbol::new(&env, STATUS_IN_PROGRESS);
         storage::store_bounty(&env, &bounty_id, &bounty);
@@ -635,6 +672,12 @@ impl MergeMintContract {
         let mut milestone = bounty.milestones.get(idx).unwrap().clone();
         if milestone.completed {
             fail(ContractError::MilestoneAlreadyCompleted);
+        }
+
+        if let Some(milestone_deadline) = milestone.deadline {
+            if env.ledger().sequence() > milestone_deadline {
+                fail(ContractError::MilestoneDeadlinePassed);
+            }
         }
 
         for (assignee, _) in bounty.assignees.iter() {
@@ -1471,6 +1514,138 @@ impl MergeMintContract {
         storage::store_bounty(&env, &bounty_id, &bounty);
 
         events::emit_deadline_extended(&env, &bounty_id, &creator, new_deadline);
+    }
+
+    /// Release a stale claim, returning the bounty to `"open"` status.
+    ///
+    /// A claim becomes stale once `claim_window` ledgers have elapsed since
+    /// `claim_bounty` was called without the bounty reaching a terminal
+    /// status (i.e. no completion/submission has happened). Any address may
+    /// call this — it exists so bounties are not stuck forever if an
+    /// assignee disappears. Each current assignee's reputation is penalized
+    /// by `get_reputation_penalty` and their `active_claims` counter is
+    /// decremented, mirroring the existing abandoned-claim penalty.
+    ///
+    /// # Arguments
+    /// * `caller` - Any address; no privileged role is required.
+    /// * `bounty_id` - The bounty whose stale claim should be released.
+    ///
+    /// # Panics
+    /// * If `bounty_id` does not exist (`ContractError::BountyNotFound`).
+    /// * If the bounty is not `"in_progress"` — in particular, a bounty that
+    ///   already has a submission recorded (i.e. has moved past
+    ///   `"in_progress"` into `"disputed"` or `"completed"`) cannot be
+    ///   released (`ContractError::BountyNotInProgress`).
+    /// * If the bounty has no recorded claim (`ContractError::NoActiveClaim`).
+    /// * If the claim window has not yet elapsed
+    ///   (`ContractError::ClaimWindowNotElapsed`).
+    ///
+    /// # Authorization
+    /// Requires auth from `caller` (any authenticated wallet may trigger release).
+    pub fn release_stale_claim(env: Env, caller: Address, bounty_id: BountyId) {
+        caller.require_auth();
+
+        let mut bounty = match storage::get_bounty(&env, &bounty_id) {
+            Some(b) => b,
+            None => fail(ContractError::BountyNotFound),
+        };
+
+        // Only an in-progress, unsubmitted claim can go stale. Any bounty
+        // that has moved on to "disputed" or "completed" has an active
+        // submission/resolution in flight and must not be released.
+        if bounty.status != Symbol::new(&env, STATUS_IN_PROGRESS) {
+            fail(ContractError::BountyNotInProgress);
+        }
+
+        let claimed_at = match storage::get_claimed_at_ledger(&env, &bounty_id) {
+            Some(l) => l,
+            None => fail(ContractError::NoActiveClaim),
+        };
+
+        let claim_window = storage::get_claim_window(&env);
+        let current_ledger = env.ledger().sequence();
+        if current_ledger < claimed_at.saturating_add(claim_window) {
+            fail(ContractError::ClaimWindowNotElapsed);
+        }
+
+        // Apply the existing reputation penalty for abandoned claims to each
+        // assignee, and release their active-claim slot.
+        for (assignee, _) in bounty.assignees.iter() {
+            let mut contrib = storage::get_contributor(&env, &assignee)
+                .unwrap_or_else(|| Contributor::new(assignee.clone()));
+            let penalty = storage::get_reputation_penalty(&env);
+            set_reputation(&env, &mut contrib, &assignee, -(penalty as i64), "penalty");
+            decrement_active_claims(&mut contrib);
+            storage::store_contributor(&env, &assignee, &contrib);
+        }
+
+        bounty.assignees = Vec::new(&env);
+        let previous_status = bounty.status.clone();
+        bounty.status = Symbol::new(&env, STATUS_OPEN);
+        storage::store_bounty(&env, &bounty_id, &bounty);
+        storage::move_bounty_status(&env, &bounty_id, &previous_status, &bounty.status);
+        storage::add_open_bounty(&env, &bounty_id);
+        storage::clear_claimed_at_ledger(&env, &bounty_id);
+
+        events::emit_claim_released(&env, &bounty_id, &caller);
+    }
+
+    // ── Admin ─────────────────────────────────────────────────────────────
+
+    /// One-time admin bootstrap. May only be called while no admin is set.
+    ///
+    /// # Panics
+    /// * If an admin has already been configured (`ContractError::AdminAlreadySet`).
+    ///
+    /// # Authorization
+    /// Requires auth from `admin`.
+    pub fn init_admin(env: Env, admin: Address) {
+        admin.require_auth();
+        if storage::get_admin(&env).is_some() {
+            fail(ContractError::AdminAlreadySet);
+        }
+        storage::set_admin(&env, &admin);
+    }
+
+    /// Configure the claim window (in ledgers) used by `release_stale_claim`.
+    ///
+    /// # Authorization
+    /// Admin-only; requires auth from `admin`.
+    pub fn set_claim_window(env: Env, admin: Address, window: u32) {
+        require_admin(&env, &admin);
+        storage::set_claim_window(&env, window);
+    }
+
+    /// Configure the reputation penalty applied by `release_stale_claim`.
+    ///
+    /// # Authorization
+    /// Admin-only; requires auth from `admin`.
+    pub fn set_reputation_penalty(env: Env, admin: Address, penalty: u32) {
+        require_admin(&env, &admin);
+        storage::set_reputation_penalty(&env, penalty);
+    }
+
+    /// Add a token to the on-chain reward-token allowlist. Only tokens on
+    /// this list may be used as `reward_token` in `create_bounty`.
+    ///
+    /// # Authorization
+    /// Admin-only; requires auth from `admin`.
+    pub fn add_reward_token(env: Env, admin: Address, token: Address) {
+        require_admin(&env, &admin);
+        storage::add_allowed_reward_token(&env, &token);
+        events::emit_reward_token_added(&env, &admin, &token);
+    }
+
+    /// Remove a token from the on-chain reward-token allowlist. Existing
+    /// bounties already denominated in `token` are unaffected — only future
+    /// `create_bounty` calls are rejected.
+    ///
+    /// # Authorization
+    /// Admin-only; requires auth from `admin`.
+    pub fn remove_reward_token(env: Env, admin: Address, token: Address) {
+        require_admin(&env, &admin);
+        storage::remove_allowed_reward_token(&env, &token);
+        events::emit_reward_token_removed(&env, &admin, &token);
     }
 
     /// Set the admin-configurable cap on concurrent open+claimed bounties

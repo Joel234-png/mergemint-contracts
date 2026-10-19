@@ -211,3 +211,23 @@ pub fn emit_reputation_changed(
         (old_reputation, new_reputation, reason),
     );
 }
+
+/// Emitted when a stale claim is released back to `Open` via
+/// `release_stale_claim`.
+pub fn emit_claim_released(env: &Env, bounty_id: &BountyId, released_by: &Address) {
+    let topic = Symbol::new(env, "claim_released");
+    env.events()
+        .publish((topic, released_by.clone()), bounty_id.clone());
+}
+
+/// Emitted when the admin adds a token to the reward-token allowlist.
+pub fn emit_reward_token_added(env: &Env, admin: &Address, token: &Address) {
+    let topic = Symbol::new(env, "reward_token_added");
+    env.events().publish((topic, admin.clone()), token.clone());
+}
+
+/// Emitted when the admin removes a token from the reward-token allowlist.
+pub fn emit_reward_token_removed(env: &Env, admin: &Address, token: &Address) {
+    let topic = Symbol::new(env, "reward_token_removed");
+    env.events().publish((topic, admin.clone()), token.clone());
+}

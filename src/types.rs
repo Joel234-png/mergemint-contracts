@@ -96,6 +96,20 @@ pub enum DataKey {
     PendingResolution(BountyId),
     /// Whether the single allowed appeal has already been used for a dispute.
     DisputeAppealed(BountyId),
+    /// Ledger sequence at which the first assignee claimed a bounty.
+    /// Used to detect stale claims eligible for `release_stale_claim`.
+    ClaimedAtLedger(BountyId),
+    /// Number of ledgers that may elapse after a claim before it becomes
+    /// stale and eligible for `release_stale_claim`. Admin-configurable.
+    ClaimWindow,
+    /// Reputation penalty applied to assignees when a stale claim is released.
+    ReputationPenalty,
+    /// Set of reward token addresses the admin has allow-listed.
+    AllowedRewardToken(Address),
+    /// Set once the admin allow-lists the first reward token. Until then the
+    /// allowlist is not enforced, so existing deployments keep accepting any
+    /// `reward_token`.
+    RewardTokenAllowlistEnabled,
 }
 
 /// An arbitrator's decision on a dispute, held in escrow until the appeal
@@ -115,6 +129,24 @@ pub struct Milestone {
     pub description: Symbol,
     pub reward: i128,
     pub completed: bool,
+    /// Optional ledger sequence deadline for this specific milestone.
+    /// When set, milestones must be ordered non-decreasing by deadline and
+    /// must not exceed the bounty's own deadline (validated in
+    /// `create_bounty`). `None` preserves pre-existing behaviour for bounties
+    /// created before this field existed.
+    pub deadline: Option<u32>,
+}
+
+/// Lightweight read-only view of a single milestone, returned by
+/// `get_milestones` so frontends can render milestone progress without
+/// decoding the whole `Bounty` struct.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct MilestoneView {
+    pub index: u32,
+    pub reward: i128,
+    pub completed: bool,
+    pub deadline: Option<u32>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

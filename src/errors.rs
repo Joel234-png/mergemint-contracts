@@ -56,6 +56,12 @@ pub enum ContractError {
     AppealWindowClosed,
     AlreadyAppealed,
     FinalizeTooEarly,
+    ClaimWindowNotElapsed,
+    NoActiveClaim,
+    MilestoneDeadlineInvalid,
+    MilestoneDeadlinePassed,
+    AdminAlreadySet,
+    RewardTokenNotAllowed,
 }
 
 /// Convert a `ContractError` to its canonical panic message and panic.
@@ -121,5 +127,13 @@ pub const fn message(e: ContractError) -> &'static str {
         ContractError::AppealWindowClosed => "the appeal window has closed",
         ContractError::AlreadyAppealed => "this dispute has already been appealed",
         ContractError::FinalizeTooEarly => "the appeal window has not yet passed",
+        ContractError::ClaimWindowNotElapsed => "claim window has not elapsed yet",
+        ContractError::NoActiveClaim => "bounty has no active claim to release",
+        ContractError::MilestoneDeadlineInvalid => {
+            "milestone deadlines must be non-decreasing and not exceed the bounty deadline"
+        }
+        ContractError::MilestoneDeadlinePassed => "milestone deadline has passed",
+        ContractError::AdminAlreadySet => "admin has already been initialized",
+        ContractError::RewardTokenNotAllowed => "reward_token is not on the admin allowlist",
     }
 }

@@ -144,6 +144,7 @@ proptest! {
                     description: Symbol::new(&env, "m"),
                     reward: r,
                     completed: false,
+                    deadline: None,
                 });
             }
         }
@@ -267,11 +268,13 @@ proptest! {
             description: Symbol::new(&env, "m1"),
             reward: i128::MAX - offset,
             completed: false,
+            deadline: None,
         });
         milestones.push_back(Milestone {
             description: Symbol::new(&env, "m2"),
             reward: offset + extra,
             completed: false,
+            deadline: None,
         });
 
         let res = client.try_create_bounty(
@@ -304,11 +307,13 @@ proptest! {
             description: Symbol::new(&env, "m1"),
             reward: m1,
             completed: false,
+            deadline: None,
         });
         milestones.push_back(Milestone {
             description: Symbol::new(&env, "m2"),
             reward: m2,
             completed: false,
+            deadline: None,
         });
 
         let sum = m1 + m2;
@@ -650,6 +655,7 @@ fn test_exact_error_messages() {
         description: Symbol::new(&env, "m"),
         reward: 50,
         completed: false,
+        deadline: None,
     });
     assert_contract_panic(
         || {
@@ -676,11 +682,13 @@ fn test_exact_error_messages() {
         description: Symbol::new(&env, "m1"),
         reward: i128::MAX,
         completed: false,
+        deadline: None,
     });
     ms_overflow.push_back(Milestone {
         description: Symbol::new(&env, "m2"),
         reward: 1,
         completed: false,
+        deadline: None,
     });
     assert_contract_panic(
         || {
@@ -802,6 +810,7 @@ fn test_fuzz_create_bounty_10k_cases() {
                                 description: Symbol::new(&env, "m"),
                                 reward: amt,
                                 completed: false,
+                                deadline: None,
                             });
                         }
                     }

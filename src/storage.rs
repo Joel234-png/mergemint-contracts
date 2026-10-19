@@ -981,3 +981,99 @@ pub fn set_dispute_appealed(env: &Env, bounty_id: &BountyId) {
     env.storage().persistent().set(&key, &true);
     extend(env, &key);
 }
+
+// ── Claim window / stale claims ───────────────────────────────────────────────
+
+/// Default number of ledgers a claim may remain unsubmitted before it can be
+/// released via `release_stale_claim`. ~7 days at 5s/ledger.
+pub const DEFAULT_CLAIM_WINDOW: u32 = 120_960;
+
+pub fn get_claim_window(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::ClaimWindow)
+        .unwrap_or(DEFAULT_CLAIM_WINDOW)
+}
+
+pub fn set_claim_window(env: &Env, window: u32) {
+    env.storage().instance().set(&DataKey::ClaimWindow, &window);
+}
+
+pub fn get_claimed_at_ledger(env: &Env, bounty_id: &BountyId) -> Option<u32> {
+    let key = DataKey::ClaimedAtLedger(bounty_id.clone());
+    let result = env.storage().persistent().get(&key);
+    if result.is_some() {
+        extend(env, &key);
+    }
+    result
+}
+
+pub fn set_claimed_at_ledger(env: &Env, bounty_id: &BountyId, ledger: u32) {
+    let key = DataKey::ClaimedAtLedger(bounty_id.clone());
+    env.storage().persistent().set(&key, &ledger);
+    extend(env, &key);
+}
+
+pub fn clear_claimed_at_ledger(env: &Env, bounty_id: &BountyId) {
+    let key = DataKey::ClaimedAtLedger(bounty_id.clone());
+    env.storage().persistent().remove(&key);
+}
+
+/// Default reputation penalty applied when a stale claim is released.
+pub const DEFAULT_REPUTATION_PENALTY: u32 = 10;
+
+pub fn get_reputation_penalty(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::ReputationPenalty)
+        .unwrap_or(DEFAULT_REPUTATION_PENALTY)
+}
+
+pub fn set_reputation_penalty(env: &Env, penalty: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::ReputationPenalty, &penalty);
+}
+
+// ── Reward token allowlist ────────────────────────────────────────────────────
+//
+// Keyed per-token so membership checks and admin add/remove are O(1) without
+// needing to read/rewrite a single growing list. `create_bounty` rejects any
+// `reward_token` that is not on this allowlist, once the admin has added the
+// first token (before that the allowlist is not enforced). Removing a token only clears
+// its membership flag; it never touches existing `Bounty` records, so
+// in-flight bounties denominated in a removed token keep paying out normally.
+
+pub fn is_reward_token_allowed(env: &Env, token: &Address) -> bool {
+    if !is_reward_token_allowlist_enabled(env) {
+        return true;
+    }
+    env.storage()
+        .instance()
+        .get(&DataKey::AllowedRewardToken(token.clone()))
+        .unwrap_or(false)
+}
+
+/// The allowlist is opt-in: it is enforced only after the admin has added at
+/// least one token. Removing tokens later never disables it again.
+pub fn is_reward_token_allowlist_enabled(env: &Env) -> bool {
+    env.storage()
+        .instance()
+        .get(&DataKey::RewardTokenAllowlistEnabled)
+        .unwrap_or(false)
+}
+
+pub fn add_allowed_reward_token(env: &Env, token: &Address) {
+    env.storage()
+        .instance()
+        .set(&DataKey::AllowedRewardToken(token.clone()), &true);
+    env.storage()
+        .instance()
+        .set(&DataKey::RewardTokenAllowlistEnabled, &true);
+}
+
+pub fn remove_allowed_reward_token(env: &Env, token: &Address) {
+    env.storage()
+        .instance()
+        .remove(&DataKey::AllowedRewardToken(token.clone()));
+}
