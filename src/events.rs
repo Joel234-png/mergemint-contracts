@@ -231,3 +231,64 @@ pub fn emit_reward_token_removed(env: &Env, admin: &Address, token: &Address) {
     let topic = Symbol::new(env, "reward_token_removed");
     env.events().publish((topic, admin.clone()), token.clone());
 }
+
+/// Shared `(config_changed, key)` topic for every admin configuration change,
+/// so an indexer can build an audit trail of admin actions from chain data.
+fn config_changed_topic(env: &Env, key: &str) -> (Symbol, Symbol) {
+    (Symbol::new(env, "config_changed"), Symbol::new(env, key))
+}
+
+pub fn emit_config_changed_u32(env: &Env, key: &str, old_value: u32, new_value: u32) {
+    env.events()
+        .publish(config_changed_topic(env, key), (old_value, new_value));
+}
+
+pub fn emit_config_changed_min_reward(
+    env: &Env,
+    token: &Address,
+    old_value: i128,
+    new_value: i128,
+) {
+    env.events().publish(
+        config_changed_topic(env, "min_reward"),
+        (token.clone(), old_value, new_value),
+    );
+}
+
+pub fn emit_config_changed_address(
+    env: &Env,
+    key: &str,
+    old_value: Option<Address>,
+    new_value: &Address,
+) {
+    env.events().publish(
+        config_changed_topic(env, key),
+        (old_value, new_value.clone()),
+    );
+}
+
+pub fn emit_ownership_transfer_started(
+    env: &Env,
+    bounty_id: &BountyId,
+    current_owner: &Address,
+    new_owner: &Address,
+) {
+    let topic = Symbol::new(env, "ownership_transfer_started");
+    env.events().publish(
+        (topic, current_owner.clone()),
+        (bounty_id.clone(), new_owner.clone()),
+    );
+}
+
+pub fn emit_ownership_transferred(
+    env: &Env,
+    bounty_id: &BountyId,
+    previous_owner: &Address,
+    new_owner: &Address,
+) {
+    let topic = Symbol::new(env, "ownership_transferred");
+    env.events().publish(
+        (topic, new_owner.clone()),
+        (bounty_id.clone(), previous_owner.clone()),
+    );
+}

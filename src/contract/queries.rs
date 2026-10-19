@@ -412,13 +412,29 @@ impl MergeMintContract {
         storage::get_claim_cooldown(&env)
     }
 
-    /// Return contract-wide configuration values in a single call:
-    /// `(creator_open_limit, claim_cooldown)`.
-    pub fn get_config(env: Env) -> (u32, u32) {
-        (
-            storage::get_creator_open_limit(&env),
-            storage::get_claim_cooldown(&env),
-        )
+    /// Return a snapshot of every contract-wide admin setting in one call.
+    pub fn get_config(env: Env) -> ContractConfig {
+        ContractConfig {
+            admin: storage::get_admin(&env),
+            pending_admin: storage::get_pending_admin(&env),
+            creator_open_limit: storage::get_creator_open_limit(&env),
+            claim_cooldown: storage::get_claim_cooldown(&env),
+            claim_window: storage::get_claim_window(&env),
+            reputation_penalty: storage::get_reputation_penalty(&env),
+            appeal_window: storage::get_appeal_window(&env),
+        }
+    }
+
+    /// Return the admin-configured minimum reward for `token` (`0` if unset;
+    /// the global `MIN_REWARD_AMOUNT` always applies as well).
+    pub fn get_min_reward(env: Env, token: Address) -> i128 {
+        storage::get_min_reward(&env, &token)
+    }
+
+    /// Return the address proposed to take over `bounty_id`, if a
+    /// `transfer_bounty_ownership` is pending.
+    pub fn get_pending_owner(env: Env, bounty_id: BountyId) -> Option<Address> {
+        storage::get_pending_owner(&env, &bounty_id)
     }
 
     /// Return the evidence hashes attached to `bounty_id`'s dispute, if any.

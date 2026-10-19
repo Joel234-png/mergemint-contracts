@@ -3591,3 +3591,169 @@ fn test_reopen_bounty_rejects_refunded_bounty() {
     // Reopen must be rejected because funds were already refunded
     client.reopen_bounty(&creator, &bounty_id, &200);
 }
+
+// ===========================================================================
+// Issues 1013–1016 — per-token minimum reward, get_config, config_changed
+// events and bounty ownership transfer
+// ===========================================================================
+
+#[test]
+fn test_min_reward_per_token_enforced() {
+    let (env, creator, admin, _verifier) = setup_test();
+    let contract_id = env.register(MergeMintContract, ());
+    let client = MergeMintContractClient::new(&env, &contract_id);
+    client.init_admin(&admin);
+
+    let token_addr = env.register_stellar_asset_contract_v2(creator.clone()).address();
+    client.set_min_reward(&admin, &token_addr, &5000);
+    assert_invocation_emits(&env, &contract_id, &["config_changed"]);
+    assert_eq!(client.get_min_reward(&token_addr), 5000);
+
+    let below = client.try_create_bounty(
+        &creator,
+        &Symbol::new(&env, "below_min"),
+        &String::from_str(&env, "desc"),
+        &1000,
+        &token_addr,
+        &0,
+        &None,
+        &Vec::new(&env),
+        &1,
+        &None,
+        &1,
+        &Vec::new(&env),
+    );
+    assert!(below.is_err(), "reward below the per-token minimum must be rejected");
+
+    // Other tokens are unaffected.
+    make_bounty(&client, &env, &creator, "other_token", None);
+}
+
+#[test]
+#[should_panic(expected = "caller is not the contract admin")]
+fn test_set_min_reward_rejects_non_admin() {
+    let (env, creator, admin, outsider) = setup_test();
+    let contract_id = env.register(MergeMintContract, ());
+    let client = MergeMintContractClient::new(&env, &contract_id);
+    client.init_admin(&admin);
+
+    let token_addr = env.register_stellar_asset_contract_v2(creator.clone()).address();
+    client.set_min_reward(&outsider, &token_addr, &5000);
+}
+
+#[test]
+fn test_get_config_reflects_admin_settings() {
+    let (env, _creator, admin, _verifier) = setup_test();
+    let contract_id = env.register(MergeMintContract, ());
+    let client = MergeMintContractClient::new(&env, &contract_id);
+    client.init_admin(&admin);
+
+    client.set_creator_open_limit(&admin, &3);
+    assert_invocation_emits(&env, &contract_id, &["config_changed"]);
+    client.set_claim_cooldown(&admin, &10);
+    client.set_claim_window(&admin, &500);
+    client.set_reputation_penalty(&admin, &7);
+    client.set_appeal_window(&admin, &20);
+
+    let config = client.get_config();
+    assert_eq!(config.admin, Some(admin));
+    assert_eq!(config.pending_admin, None);
+    assert_eq!(config.creator_open_limit, 3);
+    assert_eq!(config.claim_cooldown, 10);
+    assert_eq!(config.claim_window, 500);
+    assert_eq!(config.reputation_penalty, 7);
+    assert_eq!(config.appeal_window, 20);
+}
+
+#[test]
+fn test_two_step_admin_transfer() {
+    let (env, _creator, admin, new_admin) = setup_test();
+    let contract_id = env.register(MergeMintContract, ());
+    let client = MergeMintContractClient::new(&env, &contract_id);
+    client.init_admin(&admin);
+
+    client.transfer_admin(&admin, &new_admin);
+    assert_eq!(client.get_config().pending_admin, Some(new_admin.clone()));
+    // Nothing changes until the proposed admin accepts.
+    assert_eq!(client.get_config().admin, Some(admin.clone()));
+
+    client.accept_admin(&new_admin);
+    assert_invocation_emits(&env, &contract_id, &["config_changed"]);
+    let config = client.get_config();
+    assert_eq!(config.admin, Some(new_admin.clone()));
+    assert_eq!(config.pending_admin, None);
+
+    // The old admin has lost its rights.
+    assert!(client.try_set_claim_window(&admin, &1).is_err());
+    client.set_claim_window(&new_admin, &1);
+}
+
+#[test]
+#[should_panic(expected = "caller is not the pending admin")]
+fn test_accept_admin_rejects_non_pending() {
+    let (env, _creator, admin, outsider) = setup_test();
+    let contract_id = env.register(MergeMintContract, ());
+    let client = MergeMintContractClient::new(&env, &contract_id);
+    client.init_admin(&admin);
+    client.accept_admin(&outsider);
+}
+
+#[test]
+fn test_bounty_ownership_transfer_moves_creator_index() {
+    let (env, creator, new_owner, _verifier) = setup_test();
+    let contract_id = env.register(MergeMintContract, ());
+    let client = MergeMintContractClient::new(&env, &contract_id);
+    let bounty_id = make_bounty(&client, &env, &creator, "transfer", None);
+
+    client.transfer_bounty_ownership(&creator, &bounty_id, &new_owner);
+    assert_invocation_emits(&env, &contract_id, &["ownership_transfer_started"]);
+    assert_eq!(client.get_pending_owner(&bounty_id), Some(new_owner.clone()));
+    assert_eq!(client.get_bounty(&bounty_id).unwrap().creator, creator);
+
+    client.accept_bounty_ownership(&new_owner, &bounty_id);
+    assert_invocation_emits(&env, &contract_id, &["ownership_transferred"]);
+
+    assert_eq!(client.get_bounty(&bounty_id).unwrap().creator, new_owner);
+    assert_eq!(client.get_pending_owner(&bounty_id), None);
+    let (old_list, _) = client.get_bounties_by_creator(&creator, &None, &10);
+    let (new_list, _) = client.get_bounties_by_creator(&new_owner, &None, &10);
+    assert_eq!(old_list.len(), 0);
+    assert_eq!(new_list, vec![&env, bounty_id]);
+    assert_eq!(client.get_creator_open_count(&creator), 0);
+    assert_eq!(client.get_creator_open_count(&new_owner), 1);
+}
+
+#[test]
+#[should_panic(expected = "new owner cannot be an assignee of the bounty")]
+fn test_bounty_ownership_transfer_rejects_assignee() {
+    let (env, creator, contributor, _verifier) = setup_test();
+    let contract_id = env.register(MergeMintContract, ());
+    let client = MergeMintContractClient::new(&env, &contract_id);
+    let bounty_id = make_bounty(&client, &env, &creator, "transfer", None);
+    client.claim_bounty(&contributor, &bounty_id);
+
+    client.transfer_bounty_ownership(&creator, &bounty_id, &contributor);
+}
+
+#[test]
+#[should_panic(expected = "caller is not the pending bounty owner")]
+fn test_accept_bounty_ownership_rejects_non_pending() {
+    let (env, creator, new_owner, outsider) = setup_test();
+    let contract_id = env.register(MergeMintContract, ());
+    let client = MergeMintContractClient::new(&env, &contract_id);
+    let bounty_id = make_bounty(&client, &env, &creator, "transfer", None);
+
+    client.transfer_bounty_ownership(&creator, &bounty_id, &new_owner);
+    client.accept_bounty_ownership(&outsider, &bounty_id);
+}
+
+#[test]
+#[should_panic(expected = "not bounty creator")]
+fn test_bounty_ownership_transfer_rejects_non_creator() {
+    let (env, creator, outsider, new_owner) = setup_test();
+    let contract_id = env.register(MergeMintContract, ());
+    let client = MergeMintContractClient::new(&env, &contract_id);
+    let bounty_id = make_bounty(&client, &env, &creator, "transfer", None);
+
+    client.transfer_bounty_ownership(&outsider, &bounty_id, &new_owner);
+}

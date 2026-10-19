@@ -114,6 +114,34 @@ Contract events emitted for indexer integration.
   Unlike the bounty-scoped events above, this event is keyed by `contributor_address`
   and carries no `bounty_id`.
 
+### config_changed
+- **Topics**: `(Symbol("config_changed"), Symbol(<key>))`
+- **Data**: `(old_value, new_value)`; for `min_reward`, `(token_address, old_value, new_value)`
+- **Trigger**: Every admin configuration change:
+
+  | key                  | value type                     | emitted by               |
+  |----------------------|--------------------------------|--------------------------|
+  | `creator_open_limit` | `u32`                          | `set_creator_open_limit` |
+  | `claim_cooldown`     | `u32`                          | `set_claim_cooldown`     |
+  | `claim_window`       | `u32`                          | `set_claim_window`       |
+  | `reputation_penalty` | `u32`                          | `set_reputation_penalty` |
+  | `appeal_window`      | `u32`                          | `set_appeal_window`      |
+  | `min_reward`         | `i128` (per token)             | `set_min_reward`         |
+  | `admin`              | `Option<Address>` -> `Address` | `accept_admin` (completes `transfer_admin`) |
+- **Purpose**: Let the indexer build a full audit trail of admin actions from chain data alone
+
+### ownership_transfer_started
+- **Topics**: `(Symbol("ownership_transfer_started"), current_owner_address)`
+- **Data**: `(bounty_id, new_owner_address)`
+- **Trigger**: Creator proposes a new owner via `transfer_bounty_ownership`
+- **Purpose**: Notify indexer of a pending ownership change
+
+### ownership_transferred
+- **Topics**: `(Symbol("ownership_transferred"), new_owner_address)`
+- **Data**: `(bounty_id, previous_owner_address)`
+- **Trigger**: Proposed owner accepts via `accept_bounty_ownership`
+- **Purpose**: Notify indexer that the bounty's creator changed
+
 ## Queries
 
 ### get_contributor_bounty_history

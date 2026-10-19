@@ -773,6 +773,71 @@ pub fn append_creator_bounty(env: &Env, creator: &Address, bounty_id: &BountyId)
         .set(&DataKey::ContributorBounties(creator.clone()), &list);
 }
 
+/// Remove `bounty_id` from `creator`'s index (used when ownership moves).
+pub fn remove_creator_bounty(env: &Env, creator: &Address, bounty_id: &BountyId) {
+    let list = get_creator_bounties(env, creator);
+    let mut kept: Vec<BountyId> = Vec::new(env);
+    for id in list.iter() {
+        if id != *bounty_id {
+            kept.push_back(id);
+        }
+    }
+    env.storage()
+        .persistent()
+        .set(&DataKey::ContributorBounties(creator.clone()), &kept);
+}
+
+// ── Pending admin / bounty owner (two-step transfers) ─────────────────────────
+
+pub fn get_pending_admin(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::PendingAdmin)
+}
+
+pub fn set_pending_admin(env: &Env, pending: &Address) {
+    env.storage().instance().set(&DataKey::PendingAdmin, pending);
+}
+
+pub fn clear_pending_admin(env: &Env) {
+    env.storage().instance().remove(&DataKey::PendingAdmin);
+}
+
+pub fn get_pending_owner(env: &Env, bounty_id: &BountyId) -> Option<Address> {
+    let key = DataKey::PendingOwner(bounty_id.clone());
+    let result = env.storage().persistent().get(&key);
+    if result.is_some() {
+        extend(env, &key);
+    }
+    result
+}
+
+pub fn set_pending_owner(env: &Env, bounty_id: &BountyId, pending: &Address) {
+    let key = DataKey::PendingOwner(bounty_id.clone());
+    env.storage().persistent().set(&key, pending);
+    extend(env, &key);
+}
+
+pub fn clear_pending_owner(env: &Env, bounty_id: &BountyId) {
+    env.storage()
+        .persistent()
+        .remove(&DataKey::PendingOwner(bounty_id.clone()));
+}
+
+// ── Per-token minimum reward ──────────────────────────────────────────────────
+
+/// Admin-configured minimum reward for `token`; `0` when never set.
+pub fn get_min_reward(env: &Env, token: &Address) -> i128 {
+    env.storage()
+        .instance()
+        .get(&DataKey::MinReward(token.clone()))
+        .unwrap_or(0)
+}
+
+pub fn set_min_reward(env: &Env, token: &Address, amount: i128) {
+    env.storage()
+        .instance()
+        .set(&DataKey::MinReward(token.clone()), &amount);
+}
+
 // ── Token bounties index ─────────────────────────────────────────────────────
 
 /// Returns every bounty ID paid in `token`, in creation order. Empty if

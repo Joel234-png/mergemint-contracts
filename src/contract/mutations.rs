@@ -357,6 +357,10 @@ impl MergeMintContract {
             fail(ContractError::RewardBelowMinimum);
         }
 
+        if reward_amount < storage::get_min_reward(&env, &reward_token) {
+            fail(ContractError::RewardBelowMinimum);
+        }
+
         validate_tags(&env, &tags);
 
         if max_assignees < 1 {
@@ -1082,7 +1086,9 @@ impl MergeMintContract {
             None => storage::set_admin(&env, &caller),
         }
 
+        let old = storage::get_appeal_window(&env);
         storage::set_appeal_window(&env, ledgers);
+        events::emit_config_changed_u32(&env, "appeal_window", old, ledgers);
     }
 
     /// Attach an evidence hash to an open dispute.
@@ -1613,7 +1619,9 @@ impl MergeMintContract {
     /// Admin-only; requires auth from `admin`.
     pub fn set_claim_window(env: Env, admin: Address, window: u32) {
         require_admin(&env, &admin);
+        let old = storage::get_claim_window(&env);
         storage::set_claim_window(&env, window);
+        events::emit_config_changed_u32(&env, "claim_window", old, window);
     }
 
     /// Configure the reputation penalty applied by `release_stale_claim`.
@@ -1622,7 +1630,9 @@ impl MergeMintContract {
     /// Admin-only; requires auth from `admin`.
     pub fn set_reputation_penalty(env: Env, admin: Address, penalty: u32) {
         require_admin(&env, &admin);
+        let old = storage::get_reputation_penalty(&env);
         storage::set_reputation_penalty(&env, penalty);
+        events::emit_config_changed_u32(&env, "reputation_penalty", old, penalty);
     }
 
     /// Add a token to the on-chain reward-token allowlist. Only tokens on
@@ -1669,7 +1679,9 @@ impl MergeMintContract {
             None => storage::set_admin(&env, &caller),
         }
 
+        let old = storage::get_creator_open_limit(&env);
         storage::set_creator_open_limit(&env, limit);
+        events::emit_config_changed_u32(&env, "creator_open_limit", old, limit);
     }
 
     /// Set the admin-configurable claim cooldown (in ledgers) that a
@@ -1693,7 +1705,145 @@ impl MergeMintContract {
             None => storage::set_admin(&env, &caller),
         }
 
+        let old = storage::get_claim_cooldown(&env);
         storage::set_claim_cooldown(&env, ledgers);
+        events::emit_config_changed_u32(&env, "claim_cooldown", old, ledgers);
+    }
+
+    /// Set the minimum `reward_amount` accepted by `create_bounty` for
+    /// bounties paid in `token`. Applies on top of the global
+    /// `MIN_REWARD_AMOUNT`; `0` removes the per-token minimum.
+    ///
+    /// # Authorization
+    /// Admin-only; requires auth from `admin`.
+    pub fn set_min_reward(env: Env, admin: Address, token: Address, amount: i128) {
+        require_admin(&env, &admin);
+        if amount < 0 {
+            fail(ContractError::AmountMustBePositive);
+        }
+        let old = storage::get_min_reward(&env, &token);
+        storage::set_min_reward(&env, &token, amount);
+        events::emit_config_changed_min_reward(&env, &token, old, amount);
+    }
+
+    /// Begin a two-step admin transfer by proposing `new_admin`. The
+    /// transfer completes only once `new_admin` calls `accept_admin`.
+    ///
+    /// # Authorization
+    /// Admin-only; requires auth from `admin`.
+    pub fn transfer_admin(env: Env, admin: Address, new_admin: Address) {
+        require_admin(&env, &admin);
+        storage::set_pending_admin(&env, &new_admin);
+    }
+
+    /// Complete a pending admin transfer. Emits `config_changed` for `admin`.
+    ///
+    /// # Panics
+    /// * If `new_admin` is not the pending admin (`ContractError::NotPendingAdmin`).
+    ///
+    /// # Authorization
+    /// Requires auth from `new_admin`.
+    pub fn accept_admin(env: Env, new_admin: Address) {
+        new_admin.require_auth();
+        if storage::get_pending_admin(&env) != Some(new_admin.clone()) {
+            fail(ContractError::NotPendingAdmin);
+        }
+        let old = storage::get_admin(&env);
+        storage::set_admin(&env, &new_admin);
+        storage::clear_pending_admin(&env);
+        events::emit_config_changed_address(&env, "admin", old, &new_admin);
+    }
+
+    /// Begin a two-step transfer of `bounty_id`'s ownership to `new_owner`.
+    /// The transfer completes only once `new_owner` calls
+    /// `accept_bounty_ownership`; calling again replaces the pending owner.
+    ///
+    /// # Panics
+    /// * If `bounty_id` does not exist (`ContractError::BountyNotFound`).
+    /// * If `creator` is not the bounty creator (`ContractError::NotBountyCreator`).
+    /// * If `new_owner` is an assignee (`ContractError::OwnerCannotBeAssignee`).
+    ///
+    /// # Authorization
+    /// Requires auth from `creator`.
+    pub fn transfer_bounty_ownership(
+        env: Env,
+        creator: Address,
+        bounty_id: BountyId,
+        new_owner: Address,
+    ) {
+        creator.require_auth();
+
+        let bounty = match storage::get_bounty(&env, &bounty_id) {
+            Some(b) => b,
+            None => fail(ContractError::BountyNotFound),
+        };
+
+        if creator != bounty.creator {
+            fail(ContractError::NotBountyCreator);
+        }
+
+        if bounty.assignees.iter().any(|(addr, _)| addr == new_owner) {
+            fail(ContractError::OwnerCannotBeAssignee);
+        }
+
+        storage::set_pending_owner(&env, &bounty_id, &new_owner);
+        events::emit_ownership_transfer_started(&env, &bounty_id, &creator, &new_owner);
+    }
+
+    /// Complete a pending bounty ownership transfer. Moves the bounty between
+    /// the creator indexes backing `get_bounties_by_creator`, and its slot in
+    /// the per-creator open-bounty count while the bounty is still active.
+    ///
+    /// # Panics
+    /// * If `bounty_id` does not exist (`ContractError::BountyNotFound`).
+    /// * If `new_owner` is not the pending owner (`ContractError::NotPendingOwner`).
+    /// * If `new_owner` became an assignee since the transfer started
+    ///   (`ContractError::OwnerCannotBeAssignee`).
+    /// * If the bounty is active and `new_owner` is at the creator open-bounty
+    ///   cap (`ContractError::CreatorLimitReached`).
+    ///
+    /// # Authorization
+    /// Requires auth from `new_owner`.
+    pub fn accept_bounty_ownership(env: Env, new_owner: Address, bounty_id: BountyId) {
+        new_owner.require_auth();
+
+        let mut bounty = match storage::get_bounty(&env, &bounty_id) {
+            Some(b) => b,
+            None => fail(ContractError::BountyNotFound),
+        };
+
+        if storage::get_pending_owner(&env, &bounty_id) != Some(new_owner.clone()) {
+            fail(ContractError::NotPendingOwner);
+        }
+
+        if bounty.assignees.iter().any(|(addr, _)| addr == new_owner) {
+            fail(ContractError::OwnerCannotBeAssignee);
+        }
+
+        // Statuses counted by the per-creator open-bounty cap.
+        let is_active = bounty.status == Symbol::new(&env, STATUS_OPEN)
+            || bounty.status == Symbol::new(&env, STATUS_IN_PROGRESS)
+            || bounty.status == Symbol::new(&env, STATUS_SUBMITTED);
+        if is_active {
+            let limit = storage::get_creator_open_limit(&env);
+            if limit > 0 && storage::get_creator_open_count(&env, &new_owner) >= limit {
+                fail(ContractError::CreatorLimitReached);
+            }
+        }
+
+        let previous_owner = bounty.creator.clone();
+        bounty.creator = new_owner.clone();
+        storage::store_bounty(&env, &bounty_id, &bounty);
+        storage::clear_pending_owner(&env, &bounty_id);
+
+        storage::remove_creator_bounty(&env, &previous_owner, &bounty_id);
+        storage::append_creator_bounty(&env, &new_owner, &bounty_id);
+        if is_active {
+            storage::decrement_creator_open_count(&env, &previous_owner);
+            storage::increment_creator_open_count(&env, &new_owner);
+        }
+
+        events::emit_ownership_transferred(&env, &bounty_id, &previous_owner, &new_owner);
     }
 
     /// Reopen an expired bounty with a new deadline.

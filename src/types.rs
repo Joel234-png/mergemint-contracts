@@ -110,6 +110,34 @@ pub enum DataKey {
     /// allowlist is not enforced, so existing deployments keep accepting any
     /// `reward_token`.
     RewardTokenAllowlistEnabled,
+    /// Admin-configured minimum `reward_amount` for bounties paid in a given
+    /// token. Absent means only the global `MIN_REWARD_AMOUNT` applies.
+    MinReward(Address),
+    /// Address proposed by `transfer_admin`, pending `accept_admin`.
+    PendingAdmin,
+    /// Address proposed by `transfer_bounty_ownership` to take over a
+    /// bounty, pending `accept_bounty_ownership`.
+    PendingOwner(BountyId),
+}
+
+/// Snapshot of contract-wide admin settings, returned by `get_config`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct ContractConfig {
+    /// Current admin, if one has been established.
+    pub admin: Option<Address>,
+    /// Address proposed by `transfer_admin` that has not yet accepted.
+    pub pending_admin: Option<Address>,
+    /// Cap on concurrent open+claimed bounties per creator (`0` = unlimited).
+    pub creator_open_limit: u32,
+    /// Ledgers a contributor must wait before re-claiming an unclaimed bounty.
+    pub claim_cooldown: u32,
+    /// Ledgers after which an in-progress claim may be released as stale.
+    pub claim_window: u32,
+    /// Reputation penalty applied when a stale claim is released.
+    pub reputation_penalty: u32,
+    /// Ledgers a dispute decision waits for appeal before finalizing.
+    pub appeal_window: u32,
 }
 
 /// An arbitrator's decision on a dispute, held in escrow until the appeal

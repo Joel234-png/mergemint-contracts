@@ -7,7 +7,8 @@ use crate::errors::{fail, ContractError};
 use crate::events;
 use crate::storage;
 use crate::types::{
-    Bounty, BountyId, BountyMeta, BountySummary, Contributor, Milestone, PendingResolution,
+    Bounty, BountyId, BountyMeta, BountySummary, ContractConfig, Contributor, Milestone,
+    PendingResolution,
 };
 
 #[contract]

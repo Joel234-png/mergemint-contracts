@@ -68,6 +68,9 @@ pub enum ContractError {
     /// keeps the failure mode a catchable contract error instead of an
     /// opaque host trap.
     CorruptedIndex,
+    NotPendingAdmin,
+    NotPendingOwner,
+    OwnerCannotBeAssignee,
 }
 
 /// Convert a `ContractError` to its canonical panic message and panic.
@@ -142,5 +145,8 @@ pub const fn message(e: ContractError) -> &'static str {
         ContractError::AdminAlreadySet => "admin has already been initialized",
         ContractError::RewardTokenNotAllowed => "reward_token is not on the admin allowlist",
         ContractError::CorruptedIndex => "internal storage index invariant violated",
+        ContractError::NotPendingAdmin => "caller is not the pending admin",
+        ContractError::NotPendingOwner => "caller is not the pending bounty owner",
+        ContractError::OwnerCannotBeAssignee => "new owner cannot be an assignee of the bounty",
     }
 }
