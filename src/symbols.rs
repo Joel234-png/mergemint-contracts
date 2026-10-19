@@ -8,6 +8,8 @@ pub const STATUS_IN_PROGRESS: &str = "in_progress";
 pub const STATUS_COMPLETED: &str = "completed";
 pub const STATUS_CANCELLED: &str = "cancelled";
 pub const STATUS_DISPUTED: &str = "disputed";
+pub const STATUS_EXPIRED: &str = "expired";
+pub const STATUS_SUBMITTED: &str = "submitted";
 
 const ALLOWED_STATUSES: &[&str] = &[
     STATUS_OPEN,
@@ -15,6 +17,8 @@ const ALLOWED_STATUSES: &[&str] = &[
     STATUS_COMPLETED,
     STATUS_CANCELLED,
     STATUS_DISPUTED,
+    STATUS_EXPIRED,
+    STATUS_SUBMITTED,
 ];
 
 /// Tags accepted by `create_bounty` and `get_bounties_by_tag`.

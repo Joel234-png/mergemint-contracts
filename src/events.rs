@@ -45,6 +45,57 @@ pub fn emit_bounty_expired(env: &Env, bounty_id: &BountyId, creator: &Address) {
         .publish((topic, creator.clone()), bounty_id.clone());
 }
 
+pub fn emit_bounty_reopened(
+    env: &Env,
+    bounty_id: &BountyId,
+    creator: &Address,
+    new_deadline: u32,
+) {
+    let topic = Symbol::new(env, "bounty_reopened");
+    env.events()
+        .publish((topic, creator.clone()), (bounty_id.clone(), new_deadline));
+}
+
+pub fn emit_bounty_reassigned(
+    env: &Env,
+    bounty_id: &BountyId,
+    old_assignee: &Address,
+    new_assignee: &Address,
+) {
+    let topic = Symbol::new(env, "bounty_reassigned");
+    env.events().publish(
+        (topic, old_assignee.clone()),
+        (bounty_id.clone(), new_assignee.clone()),
+    );
+}
+
+pub fn emit_bounty_sponsored(
+    env: &Env,
+    bounty_id: &BountyId,
+    sponsor: &Address,
+    amount: &i128,
+    new_reward_amount: &i128,
+) {
+    let topic = Symbol::new(env, "bounty_sponsored");
+    env.events().publish(
+        (topic, sponsor.clone()),
+        (bounty_id.clone(), *amount, *new_reward_amount),
+    );
+}
+
+pub fn emit_work_submitted(
+    env: &Env,
+    bounty_id: &BountyId,
+    assignee: &Address,
+    submission_hash: &BytesN<32>,
+) {
+    let topic = Symbol::new(env, "work_submitted");
+    env.events().publish(
+        (topic, assignee.clone()),
+        (bounty_id.clone(), submission_hash.clone()),
+    );
+}
+
 pub fn emit_deadline_extended(
     env: &Env,
     bounty_id: &BountyId,

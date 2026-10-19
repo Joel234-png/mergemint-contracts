@@ -1,6 +1,6 @@
 use crate::symbols::{
-    self, SymbolKind, STATUS_CANCELLED, STATUS_COMPLETED, STATUS_DISPUTED, STATUS_IN_PROGRESS,
-    STATUS_OPEN,
+    self, SymbolKind, STATUS_CANCELLED, STATUS_COMPLETED, STATUS_DISPUTED, STATUS_EXPIRED,
+    STATUS_IN_PROGRESS, STATUS_OPEN, STATUS_SUBMITTED,
 };
 
 /// Minimum reward amount enforced at bounty creation.
@@ -74,6 +74,39 @@ fn distribute_payout(
     }
 
     primary_assignee
+}
+
+/// Refund every sponsor's tracked contribution for `bounty_id`, clearing the
+/// sponsor list so refunds cannot be issued twice. Returns the total amount
+/// refunded (0 if there were no sponsors).
+///
+/// Used by both `cancel_bounty` (full refund alongside the creator's share)
+/// and `expire_bounty` (sponsors only; the creator's share stays escrowed so
+/// `reopen_bounty` can reuse it).
+fn refund_sponsors(env: &Env, bounty_id: &BountyId, reward_token: &Address, from: &Address) -> i128 {
+    let sponsors = storage::take_sponsors(env, bounty_id);
+    if sponsors.is_empty() {
+        return 0;
+    }
+    let token = TokenClient::new(env, reward_token);
+    let mut total: i128 = 0;
+    for (sponsor, amount) in sponsors.iter() {
+        token.transfer(from, &sponsor, &amount);
+        total += amount;
+    }
+    total
+}
+
+/// Refund the full escrowed reward for a cancelled bounty: each sponsor gets
+/// back exactly what they contributed, and the creator gets the remainder.
+fn refund_escrow(env: &Env, bounty_id: &BountyId, bounty: &Bounty) {
+    let contract_address = env.current_contract_address();
+    let sponsor_total = refund_sponsors(env, bounty_id, &bounty.reward_token, &contract_address);
+    let creator_amount = bounty.reward_amount - sponsor_total;
+    if creator_amount > 0 {
+        let token = TokenClient::new(env, &bounty.reward_token);
+        token.transfer(&contract_address, &bounty.creator, &creator_amount);
+    }
 }
 
 /// Decrement a contributor's active claims counter, if greater than zero.
@@ -544,6 +577,13 @@ impl MergeMintContract {
             return;
         }
 
+        // When verifiers are configured, a work submission must exist first —
+        // approval without a recorded submission leaves verifiers with
+        // nothing concrete to review.
+        if storage::get_submission(&env, &bounty_id).is_none() {
+            fail(ContractError::SubmissionRequired);
+        }
+
         let required = bounty.required_verifiers.clone().unwrap();
         let is_authorized = required.iter().any(|v| v == verifier);
         if !is_authorized {
@@ -721,13 +761,9 @@ impl MergeMintContract {
         } else {
             // validate_symbol above already guarantees resolution is "complete" or
             // "cancel" — this branch handles "cancel".
-            // Refund escrowed reward to creator before mutating status.
-            let token = TokenClient::new(&env, &bounty.reward_token);
-            token.transfer(
-                &env.current_contract_address(),
-                &bounty.creator,
-                &bounty.reward_amount,
-            );
+            // Refund escrowed reward pro rata: sponsors get their contribution
+            // back, the creator gets the remainder.
+            refund_escrow(&env, &bounty_id, &bounty);
 
             let previous_status = bounty.status.clone();
             bounty.status = Symbol::new(&env, STATUS_CANCELLED);
@@ -805,13 +841,12 @@ impl MergeMintContract {
             ContractError::BountyNotOpen,
         );
 
-        // Refund escrowed reward to creator before mutating status.
-        let token = TokenClient::new(&env, &bounty.reward_token);
-        token.transfer(
-            &env.current_contract_address(),
-            &bounty.creator,
-            &bounty.reward_amount,
-        );
+        // Refund the escrowed reward pro rata: each sponsor gets back exactly
+        // what they contributed, and the creator gets back the remainder
+        // (reward_amount minus all sponsor contributions). This preserves the
+        // escrow balance invariant even when third parties co-funded via
+        // `sponsor_bounty`.
+        refund_escrow(&env, &bounty_id, &bounty);
 
         let previous_status = bounty.status.clone();
         bounty.status = Symbol::new(&env, STATUS_CANCELLED);
@@ -861,20 +896,275 @@ impl MergeMintContract {
             fail(ContractError::BountyNotOpen);
         }
 
-        // Refund escrowed reward to creator before mutating status.
-        let token = TokenClient::new(&env, &bounty.reward_token);
-        token.transfer(
-            &env.current_contract_address(),
-            &bounty.creator,
-            &bounty.reward_amount,
-        );
+        // Sponsors get their pro-rata share back immediately on expiry — their
+        // funds should not be held hostage by the creator's reopen decision.
+        // The creator's own share stays escrowed (unlike `cancel_bounty`, which
+        // refunds everyone) so the creator can `reopen_bounty` without having
+        // to re-fund it.
+        let contract_address = env.current_contract_address();
+        let sponsor_total =
+            refund_sponsors(&env, &bounty_id, &bounty.reward_token, &contract_address);
+        if sponsor_total > 0 {
+            bounty.reward_amount -= sponsor_total;
+        }
 
         let previous_status = bounty.status.clone();
-        bounty.status = Symbol::new(&env, STATUS_CANCELLED);
+        bounty.status = Symbol::new(&env, STATUS_EXPIRED);
+        storage::store_bounty(&env, &bounty_id, &bounty);
+        storage::move_bounty_status(&env, &bounty_id, &previous_status, &bounty.status);
+        storage::remove_open_bounty(&env, &bounty_id);
+
+        events::emit_bounty_expired(&env, &bounty_id, &bounty.creator);
+    }
+
+    /// Reopen an expired bounty, moving it back to `"open"` with a new deadline.
+    ///
+    /// Only usable while the escrowed reward has not been refunded, i.e. while
+    /// the bounty is still in the `"expired"` state (see `expire_bounty`, which
+    /// intentionally does not refund the creator so that `reopen_bounty` has
+    /// funds to work with).
+    ///
+    /// # Arguments
+    /// * `creator` - The wallet that created the bounty.
+    /// * `bounty_id` - The bounty to reopen.
+    /// * `new_deadline` - The new ledger sequence deadline. Must be strictly in
+    ///   the future (greater than the current ledger sequence).
+    ///
+    /// # Panics
+    /// * If `bounty_id` does not exist (`ContractError::BountyNotFound`).
+    /// * If `creator` is not the bounty creator (`ContractError::NotBountyCreator`).
+    /// * If the bounty is not currently `"expired"` (`ContractError::BountyNotExpired`).
+    /// * If `new_deadline` is not strictly greater than the current ledger
+    ///   sequence (`ContractError::InvalidNewDeadline`).
+    ///
+    /// # Authorization
+    /// Requires auth from `creator`.
+    pub fn reopen_bounty(env: Env, creator: Address, bounty_id: BountyId, new_deadline: u32) {
+        creator.require_auth();
+
+        let mut bounty = match storage::get_bounty(&env, &bounty_id) {
+            Some(b) => b,
+            None => fail(ContractError::BountyNotFound),
+        };
+
+        if creator != bounty.creator {
+            fail(ContractError::NotBountyCreator);
+        }
+
+        if bounty.status != Symbol::new(&env, STATUS_EXPIRED) {
+            fail(ContractError::BountyNotExpired);
+        }
+
+        if new_deadline <= env.ledger().sequence() {
+            fail(ContractError::InvalidNewDeadline);
+        }
+
+        let previous_status = bounty.status.clone();
+        bounty.status = Symbol::new(&env, STATUS_OPEN);
+        bounty.deadline = Some(new_deadline);
+        storage::store_bounty(&env, &bounty_id, &bounty);
+        storage::move_bounty_status(&env, &bounty_id, &previous_status, &bounty.status);
+        storage::add_open_bounty(&env, &bounty_id);
+
+        events::emit_bounty_reopened(&env, &bounty_id, &creator, new_deadline);
+    }
+
+    /// Record a work submission for an in-progress bounty.
+    ///
+    /// Stores a submission hash (e.g. the hash of a PR URL) and moves the
+    /// bounty to the `"submitted"` status, signalling to creators and
+    /// verifiers that the assignee's work is ready for review. When the
+    /// bounty has `required_verifiers` configured, `approve_completion` will
+    /// require a submission to exist before it can execute.
+    ///
+    /// # Arguments
+    /// * `assignee` - The contributor submitting work. Must be a current
+    ///   assignee of the bounty.
+    /// * `bounty_id` - The bounty being worked on.
+    /// * `submission_hash` - 32-byte hash identifying the submitted work.
+    ///
+    /// # Panics
+    /// * If `bounty_id` does not exist (`ContractError::BountyNotFound`).
+    /// * If the bounty is not `"in_progress"` (`ContractError::BountyNotInProgress`).
+    /// * If `assignee` is not one of the bounty's assignees (`ContractError::NotAssignee`).
+    ///
+    /// # Authorization
+    /// Requires auth from `assignee`.
+    pub fn submit_work(
+        env: Env,
+        assignee: Address,
+        bounty_id: BountyId,
+        submission_hash: BytesN<32>,
+    ) {
+        assignee.require_auth();
+
+        let mut bounty = match storage::get_bounty(&env, &bounty_id) {
+            Some(b) => b,
+            None => fail(ContractError::BountyNotFound),
+        };
+
+        ensure_status(
+            &bounty,
+            &[Symbol::new(&env, STATUS_IN_PROGRESS)],
+            ContractError::BountyNotInProgress,
+        );
+
+        let is_assignee = bounty.assignees.iter().any(|(addr, _)| addr == assignee);
+        if !is_assignee {
+            fail(ContractError::NotAssignee);
+        }
+
+        storage::set_submission(&env, &bounty_id, &submission_hash);
+
+        let previous_status = bounty.status.clone();
+        bounty.status = Symbol::new(&env, STATUS_SUBMITTED);
         storage::store_bounty(&env, &bounty_id, &bounty);
         storage::move_bounty_status(&env, &bounty_id, &previous_status, &bounty.status);
 
-        events::emit_bounty_expired(&env, &bounty_id, &bounty.creator);
+        events::emit_work_submitted(&env, &bounty_id, &assignee, &submission_hash);
+    }
+
+    /// Add third-party escrowed funds to a bounty's reward pool.
+    ///
+    /// Any address (not only the creator) may sponsor a bounty that has not
+    /// yet reached a terminal state. Each sponsor's cumulative contribution is
+    /// tracked separately so it can be refunded pro rata (rather than handed
+    /// to the creator) if the bounty is later cancelled or expires.
+    ///
+    /// # Arguments
+    /// * `sponsor` - Wallet contributing funds.
+    /// * `bounty_id` - The bounty to co-fund.
+    /// * `amount` - Amount to add to the escrowed reward. Must be positive.
+    ///
+    /// # Panics
+    /// * If `bounty_id` does not exist (`ContractError::BountyNotFound`).
+    /// * If `amount` is not strictly positive (`ContractError::AmountMustBePositive`).
+    /// * If the bounty is in a terminal status (`completed`, `cancelled`, or
+    ///   `expired`) or disputed (`ContractError::BountyNotOpen`).
+    ///
+    /// # Authorization
+    /// Requires auth from `sponsor`.
+    pub fn sponsor_bounty(env: Env, sponsor: Address, bounty_id: BountyId, amount: i128) {
+        sponsor.require_auth();
+
+        let mut bounty = match storage::get_bounty(&env, &bounty_id) {
+            Some(b) => b,
+            None => fail(ContractError::BountyNotFound),
+        };
+
+        if amount <= 0 {
+            fail(ContractError::AmountMustBePositive);
+        }
+
+        // Co-funding is only meaningful while the bounty can still pay out:
+        // reject terminal statuses and disputes.
+        ensure_status(
+            &bounty,
+            &[
+                Symbol::new(&env, STATUS_OPEN),
+                Symbol::new(&env, STATUS_IN_PROGRESS),
+                Symbol::new(&env, STATUS_SUBMITTED),
+            ],
+            ContractError::BountyNotOpen,
+        );
+
+        let token = TokenClient::new(&env, &bounty.reward_token);
+        token.transfer(&sponsor, &env.current_contract_address(), &amount);
+
+        storage::add_sponsor_contribution(&env, &bounty_id, &sponsor, amount);
+
+        bounty.reward_amount += amount;
+        storage::store_bounty(&env, &bounty_id, &bounty);
+
+        events::emit_bounty_sponsored(&env, &bounty_id, &sponsor, &amount, &bounty.reward_amount);
+    }
+
+    /// Reassign a `"in_progress"` (claimed) bounty's single assignee to a new
+    /// contributor.
+    ///
+    /// Applies the same eligibility checks `claim_bounty` applies to the new
+    /// assignee (not the creator, not already assigned, no other active claim,
+    /// meets `min_reputation`). The previous assignee's active-claim counter is
+    /// decremented and the new assignee's is incremented, so
+    /// `get_contributor_active_bounty` reflects the swap for both addresses.
+    ///
+    /// # Arguments
+    /// * `creator` - The wallet that created the bounty.
+    /// * `bounty_id` - The bounty to reassign.
+    /// * `new_assignee` - The contributor who takes over the claim.
+    ///
+    /// # Panics
+    /// * If `bounty_id` does not exist (`ContractError::BountyNotFound`).
+    /// * If `creator` is not the bounty creator (`ContractError::NotBountyCreator`).
+    /// * If the bounty is not `"in_progress"` (`ContractError::BountyNotInProgress`) —
+    ///   this also rejects reassignment while a dispute is open, since a disputed
+    ///   bounty is never in `"in_progress"` status.
+    /// * If the bounty has no assignee (`ContractError::BountyHasNoAssignee`).
+    /// * If `new_assignee` is already the current assignee (`ContractError::AlreadyClaimed`).
+    /// * If `new_assignee` is the bounty creator (`ContractError::CreatorCannotClaim`).
+    /// * If `new_assignee` already has another active claim (`ContractError::ContributorHasActiveClaim`).
+    /// * If `new_assignee`'s reputation is below `min_reputation` (`ContractError::ReputationTooLow`).
+    ///
+    /// # Authorization
+    /// Requires auth from `creator`.
+    pub fn reassign_bounty(env: Env, creator: Address, bounty_id: BountyId, new_assignee: Address) {
+        creator.require_auth();
+
+        let mut bounty = match storage::get_bounty(&env, &bounty_id) {
+            Some(b) => b,
+            None => fail(ContractError::BountyNotFound),
+        };
+
+        if creator != bounty.creator {
+            fail(ContractError::NotBountyCreator);
+        }
+
+        // Only "in_progress" bounties are reassignable. A disputed bounty is
+        // never in this status, so this guard also blocks reassignment while a
+        // dispute is open.
+        ensure_status(
+            &bounty,
+            &[Symbol::new(&env, STATUS_IN_PROGRESS)],
+            ContractError::BountyNotInProgress,
+        );
+
+        if bounty.assignees.is_empty() {
+            fail(ContractError::BountyHasNoAssignee);
+        }
+
+        let (old_assignee, share_bp) = bounty.assignees.get(0).unwrap();
+
+        if new_assignee == old_assignee {
+            fail(ContractError::AlreadyClaimed);
+        }
+
+        if new_assignee == bounty.creator {
+            fail(ContractError::CreatorCannotClaim);
+        }
+
+        let mut new_contrib = storage::get_contributor(&env, &new_assignee)
+            .unwrap_or_else(|| Contributor::new(new_assignee.clone()));
+
+        if new_contrib.active_claims >= 1 {
+            fail(ContractError::ContributorHasActiveClaim);
+        }
+
+        if bounty.min_reputation > 0 && new_contrib.reputation < bounty.min_reputation {
+            fail(ContractError::ReputationTooLow);
+        }
+
+        bounty.assignees.set(0, (new_assignee.clone(), share_bp));
+        storage::store_bounty(&env, &bounty_id, &bounty);
+
+        if let Some(mut old_contrib) = storage::get_contributor(&env, &old_assignee) {
+            decrement_active_claims(&mut old_contrib);
+            storage::store_contributor(&env, &old_assignee, &old_contrib);
+        }
+
+        new_contrib.active_claims += 1;
+        storage::store_contributor(&env, &new_assignee, &new_contrib);
+
+        events::emit_bounty_reassigned(&env, &bounty_id, &old_assignee, &new_assignee);
     }
 
     /// Extend the deadline of an active bounty.

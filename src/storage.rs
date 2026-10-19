@@ -601,6 +601,80 @@ pub fn set_approvals(env: &Env, bounty_id: &BountyId, approvals: &Vec<Address>) 
     extend(env, &key);
 }
 
+// ── Sponsors ──────────────────────────────────────────────────────────────────
+
+/// Returns the list of `(sponsor, contributed_amount)` pairs for a bounty.
+pub fn get_sponsors(env: &Env, bounty_id: &BountyId) -> Vec<(Address, i128)> {
+    let key = DataKey::Sponsors(bounty_id.clone());
+    let result: Option<Vec<(Address, i128)>> = env.storage().persistent().get(&key);
+    if result.is_some() {
+        extend(env, &key);
+    }
+    result.unwrap_or_else(|| Vec::new(env))
+}
+
+fn set_sponsors(env: &Env, bounty_id: &BountyId, sponsors: &Vec<(Address, i128)>) {
+    let key = DataKey::Sponsors(bounty_id.clone());
+    if sponsors.is_empty() {
+        env.storage().persistent().remove(&key);
+    } else {
+        env.storage().persistent().set(&key, sponsors);
+        extend(env, &key);
+    }
+}
+
+/// Records `amount` as contributed by `sponsor`, adding to any prior
+/// contribution from the same address.
+pub fn add_sponsor_contribution(
+    env: &Env,
+    bounty_id: &BountyId,
+    sponsor: &Address,
+    amount: i128,
+) {
+    let mut sponsors = get_sponsors(env, bounty_id);
+    let mut found = false;
+    let mut updated: Vec<(Address, i128)> = Vec::new(env);
+    for (addr, existing) in sponsors.iter() {
+        if addr == *sponsor {
+            updated.push_back((addr, existing + amount));
+            found = true;
+        } else {
+            updated.push_back((addr, existing));
+        }
+    }
+    if !found {
+        updated.push_back((sponsor.clone(), amount));
+    }
+    sponsors = updated;
+    set_sponsors(env, bounty_id, &sponsors);
+}
+
+/// Removes and returns all sponsor contributions for a bounty (used once
+/// sponsors have been refunded on cancel/expiry, to prevent double refunds).
+pub fn take_sponsors(env: &Env, bounty_id: &BountyId) -> Vec<(Address, i128)> {
+    let sponsors = get_sponsors(env, bounty_id);
+    let key = DataKey::Sponsors(bounty_id.clone());
+    env.storage().persistent().remove(&key);
+    sponsors
+}
+
+// ── Work submissions ──────────────────────────────────────────────────────────
+
+pub fn get_submission(env: &Env, bounty_id: &BountyId) -> Option<soroban_sdk::BytesN<32>> {
+    let key = DataKey::Submission(bounty_id.clone());
+    let result: Option<soroban_sdk::BytesN<32>> = env.storage().persistent().get(&key);
+    if result.is_some() {
+        extend(env, &key);
+    }
+    result
+}
+
+pub fn set_submission(env: &Env, bounty_id: &BountyId, hash: &soroban_sdk::BytesN<32>) {
+    let key = DataKey::Submission(bounty_id.clone());
+    env.storage().persistent().set(&key, hash);
+    extend(env, &key);
+}
+
 // ── Creator bounties index ────────────────────────────────────────────────────
 
 pub fn get_creator_bounties(env: &Env, creator: &Address) -> Vec<BountyId> {

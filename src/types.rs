@@ -49,6 +49,13 @@ pub enum DataKey {
     /// Paged open-bounties shard. `page` is 0-indexed.
     OpenBountiesPage(u32),
     Approvals(BountyId),
+    /// Per-bounty list of `(sponsor_address, contributed_amount)` pairs for
+    /// third-party co-funding. Maintained by `sponsor_bounty`; consumed by
+    /// `cancel_bounty` / `expire_bounty` to refund each sponsor pro rata.
+    Sponsors(BountyId),
+    /// `BytesN<32>` work-submission hash recorded by `submit_work`, keyed by
+    /// bounty id. Present once the assignee has submitted work for review.
+    Submission(BountyId),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
